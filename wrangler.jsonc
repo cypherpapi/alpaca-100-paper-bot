@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "alpaca-100-paper-bot",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-03",
+  "observability": {
+    "enabled": true
+  },
+  "triggers": {
+    "crons": ["*/5 * * * 1-5"]
+  },
+  "vars": {
+    "TRADING_ENABLED": "false",
+    "UNIVERSE": "TQQQ,SQQQ,SOXL,SOXS,TNA,TZA",
+    "ALLOCATION_PCT": "0.90",
+    "STOP_LOSS_PCT": "0.02",
+    "TAKE_PROFIT_PCT": "0.03",
+    "DAILY_LOSS_LIMIT_PCT": "0.04",
+    "ENTRY_START_ET": "09:45",
+    "ENTRY_END_ET": "14:30",
+    "FORCE_EXIT_ET": "15:50"
+  }
+}
