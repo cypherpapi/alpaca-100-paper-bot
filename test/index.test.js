@@ -5,10 +5,15 @@ import {
   MARKET_DATA_BASE_URL,
   PAPER_TRADING_BASE_URL,
   accountDailyReturn,
+  canRiskAnotherEntry,
+  cooldownRemainingMinutes,
+  countDailyEntries,
   easternParts,
   getConfig,
   healthPayload,
+  latestBotExitTime,
   momentumMetrics,
+  paperAccountSummary,
   positionExitReason,
   roundOrderPrice,
   selectMomentumCandidate,
@@ -28,6 +33,8 @@ const baseEnv = {
   ENTRY_END_ET: "14:30",
   ENTRY_START_ET: "09:45",
   FORCE_EXIT_ET: "15:50",
+  MAX_ENTRIES_PER_DAY: "4",
+  REENTRY_COOLDOWN_MINUTES: "15",
   STOP_LOSS_PCT: "0.02",
   TAKE_PROFIT_PCT: "0.03",
   TRADING_ENABLED: "false",
@@ -44,6 +51,14 @@ test("all trading traffic is pinned to Alpaca paper trading", () => {
 test("configuration rejects unsafe percentage values", () => {
   assert.throws(() => getConfig({ ...baseEnv, STOP_LOSS_PCT: "2" }), /greater than 0/);
   assert.throws(() => getConfig({ ...baseEnv, ALLOCATION_PCT: "0" }), /greater than 0/);
+  assert.throws(
+    () => getConfig({ ...baseEnv, MAX_ENTRIES_PER_DAY: "4.5" }),
+    /integer from 1 through 10/,
+  );
+  assert.throws(
+    () => getConfig({ ...baseEnv, REENTRY_COOLDOWN_MINUTES: "121" }),
+    /integer from 0 through 120/,
+  );
 });
 
 test("Eastern time conversion handles daylight saving time", () => {
@@ -125,4 +140,73 @@ test("daily loss limit takes priority and order prices use valid precision", () 
   );
   assert.equal(roundOrderPrice(12.3456), "12.35");
   assert.equal(roundOrderPrice(0.123456), "0.1235");
+});
+
+test("multiple daily entries use order history and enforce a reentry cooldown", () => {
+  const dateTag = "20260904";
+  const orders = [
+    {
+      client_order_id: "cdbot-entry-20260904",
+      side: "buy",
+      status: "filled",
+      symbol: "SOXL",
+    },
+    {
+      client_order_id: "cdbot-entry-20260904-2",
+      side: "buy",
+      status: "filled",
+      symbol: "TQQQ",
+    },
+    {
+      client_order_id: "cdbot-exit-20260904-2",
+      filled_at: "2026-09-04T15:00:00Z",
+      side: "sell",
+      status: "filled",
+      symbol: "TQQQ",
+    },
+    {
+      client_order_id: "cdbot-entry-20260903",
+      side: "buy",
+      status: "filled",
+      symbol: "TQQQ",
+    },
+  ];
+
+  assert.equal(countDailyEntries(orders, dateTag), 2);
+  assert.equal(latestBotExitTime(orders, dateTag).toISOString(), "2026-09-04T15:00:00.000Z");
+  assert.equal(
+    cooldownRemainingMinutes(
+      new Date("2026-09-04T15:10:00Z"),
+      latestBotExitTime(orders, dateTag),
+      15,
+    ),
+    5,
+  );
+  assert.equal(
+    cooldownRemainingMinutes(
+      new Date("2026-09-04T15:16:00Z"),
+      latestBotExitTime(orders, dateTag),
+      15,
+    ),
+    0,
+  );
+});
+
+test("new entries stop when the next planned stop could breach the daily loss cap", () => {
+  const config = getConfig(baseEnv);
+  assert.equal(canRiskAnotherEntry({ equity: "100", last_equity: "100" }, config), true);
+  assert.equal(canRiskAnotherEntry({ equity: "97.70", last_equity: "100" }, config), false);
+});
+
+test("paper account summaries make daily results visible without exposing credentials", () => {
+  assert.deepEqual(
+    paperAccountSummary({ cash: "100.22", equity: "100.22", last_equity: "100" }),
+    {
+      cash: 100.22,
+      dailyPl: 0.22,
+      dailyReturnPct: 0.22,
+      equity: 100.22,
+      lastEquity: 100,
+    },
+  );
 });
