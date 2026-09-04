@@ -24,6 +24,14 @@ function integerFromEnv(value, fallback, { label, maximum, minimum }) {
   return parsed;
 }
 
+function boundedNumberFromEnv(value, fallback, { label, maximum, minimum }) {
+  const parsed = numberFromEnv(value, fallback);
+  if (parsed < minimum || parsed > maximum) {
+    throw new Error(`${label} must be from ${minimum} through ${maximum}.`);
+  }
+  return parsed;
+}
+
 function parseClock(value, fallback) {
   const candidate = value || fallback;
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(candidate)) {
@@ -34,7 +42,8 @@ function parseClock(value, fallback) {
 }
 
 function getConfig(env) {
-  const universe = (env.UNIVERSE || "TQQQ,SQQQ,SOXL,SOXS,TNA,TZA")
+  const universe =
+    (env.UNIVERSE || "TQQQ,SQQQ,SOXL,SOXS,TNA,TZA,NVDL,NVDD,TSLL,TSLQ,LABU,LABD")
     .split(",")
     .map((symbol) => symbol.trim().toUpperCase())
     .filter(Boolean);
@@ -43,10 +52,10 @@ function getConfig(env) {
     throw new Error("UNIVERSE must contain at least one symbol.");
   }
 
-  const allocationPct = percentFromEnv(env.ALLOCATION_PCT, 0.9);
-  const stopLossPct = percentFromEnv(env.STOP_LOSS_PCT, 0.02);
-  const takeProfitPct = percentFromEnv(env.TAKE_PROFIT_PCT, 0.03);
-  const dailyLossLimitPct = percentFromEnv(env.DAILY_LOSS_LIMIT_PCT, 0.04);
+  const allocationPct = percentFromEnv(env.ALLOCATION_PCT, 0.97);
+  const stopLossPct = percentFromEnv(env.STOP_LOSS_PCT, 0.04);
+  const takeProfitPct = percentFromEnv(env.TAKE_PROFIT_PCT, 0.06);
+  const dailyLossLimitPct = percentFromEnv(env.DAILY_LOSS_LIMIT_PCT, 0.08);
 
   return {
     allocationPct,
@@ -54,16 +63,24 @@ function getConfig(env) {
     entryEndMinutes: parseClock(env.ENTRY_END_ET, "14:30"),
     entryStartMinutes: parseClock(env.ENTRY_START_ET, "09:45"),
     forceExitMinutes: parseClock(env.FORCE_EXIT_ET, "15:50"),
-    maxEntriesPerDay: integerFromEnv(env.MAX_ENTRIES_PER_DAY, 4, {
+    maxEntriesPerDay: integerFromEnv(env.MAX_ENTRIES_PER_DAY, 6, {
       label: "MAX_ENTRIES_PER_DAY",
       maximum: 10,
       minimum: 1,
     }),
-    reentryCooldownMinutes: integerFromEnv(env.REENTRY_COOLDOWN_MINUTES, 15, {
+    minReturn15m: percentFromEnv(env.MIN_RETURN_15M, 0.0015),
+    minReturn60m: percentFromEnv(env.MIN_RETURN_60M, 0.003),
+    minVolumeRatio: boundedNumberFromEnv(env.MIN_VOLUME_RATIO, 0.65, {
+      label: "MIN_VOLUME_RATIO",
+      maximum: 5,
+      minimum: 0.1,
+    }),
+    reentryCooldownMinutes: integerFromEnv(env.REENTRY_COOLDOWN_MINUTES, 10, {
       label: "REENTRY_COOLDOWN_MINUTES",
       maximum: 120,
       minimum: 0,
     }),
+    reversalReturn15m: percentFromEnv(env.REVERSAL_RETURN_15M, 0.0015),
     stopLossPct,
     takeProfitPct,
     tradingEnabled: env.TRADING_ENABLED === "true",
@@ -175,16 +192,19 @@ function momentumMetrics(bars) {
   };
 }
 
-function selectMomentumCandidate(barsBySymbol, universe) {
+function selectMomentumCandidate(barsBySymbol, universe, strategy = {}) {
+  const minReturn15m = strategy.minReturn15m ?? 0.0015;
+  const minReturn60m = strategy.minReturn60m ?? 0.003;
+  const minVolumeRatio = strategy.minVolumeRatio ?? 0.65;
   const candidates = universe
     .map((symbol) => ({ symbol, metrics: momentumMetrics(barsBySymbol[symbol]) }))
     .filter(({ metrics }) => metrics)
     .filter(
       ({ metrics }) =>
         metrics.price > metrics.sma9 &&
-        metrics.return15m >= 0.0025 &&
-        metrics.return60m >= 0.004 &&
-        metrics.volumeRatio >= 0.7,
+        metrics.return15m >= minReturn15m &&
+        metrics.return60m >= minReturn60m &&
+        metrics.volumeRatio >= minVolumeRatio,
     )
     .sort((a, b) => b.metrics.score - a.metrics.score);
   return candidates[0] || null;
@@ -292,7 +312,11 @@ function positionExitReason({ account, config, metrics, now, position }) {
   if (minutes >= config.forceExitMinutes) return "scheduled-close";
   if (unrealizedReturn <= -config.stopLossPct) return "position-stop";
   if (unrealizedReturn >= config.takeProfitPct) return "take-profit";
-  if (metrics && (metrics.price < metrics.sma9 || metrics.return15m <= -0.002)) {
+  if (
+    metrics &&
+    metrics.price < metrics.sma9 &&
+    metrics.return15m <= -config.reversalReturn15m
+  ) {
     return "momentum-reversal";
   }
   return null;
@@ -301,6 +325,19 @@ function positionExitReason({ account, config, metrics, now, position }) {
 function roundOrderPrice(value) {
   const decimals = value >= 1 ? 2 : 4;
   return Number(value).toFixed(decimals);
+}
+
+function protectiveStopRequest(config, position, dateTag, tradeSequence) {
+  const averageEntry = Number(position.avg_entry_price);
+  return {
+    client_order_id: `${ORDER_PREFIX}-stop-${dateTag}-${tradeSequence}`,
+    qty: position.qty,
+    side: "sell",
+    stop_price: roundOrderPrice(averageEntry * (1 - config.stopLossPct)),
+    symbol: position.symbol,
+    time_in_force: "day",
+    type: "stop",
+  };
 }
 
 function sleep(milliseconds) {
@@ -363,21 +400,16 @@ async function ensureProtectiveStop(
   );
   if (existing) return { action: "stop-already-active", orderId: existing.id };
 
-  const averageEntry = Number(position.avg_entry_price);
-  const stopPrice = roundOrderPrice(averageEntry * (1 - config.stopLossPct));
+  const request = protectiveStopRequest(config, position, dateTag, tradeSequence);
   const order = await tradingRequest(env, "/v2/orders", {
-    body: JSON.stringify({
-      client_order_id: `${ORDER_PREFIX}-stop-${dateTag}-${tradeSequence}`,
-      qty: position.qty,
-      side: "sell",
-      stop_price: stopPrice,
-      symbol: position.symbol,
-      time_in_force: "day",
-      type: "stop",
-    }),
+    body: JSON.stringify(request),
     method: "POST",
   });
-  return { action: "protective-stop-submitted", orderId: order.id, stopPrice };
+  return {
+    action: "protective-stop-submitted",
+    orderId: order.id,
+    stopPrice: request.stop_price,
+  };
 }
 
 async function waitForOrderResult(env, orderId) {
@@ -562,7 +594,7 @@ async function runBot(env, now = new Date()) {
     });
   }
 
-  const candidate = selectMomentumCandidate(barsBySymbol, config.universe);
+  const candidate = selectMomentumCandidate(barsBySymbol, config.universe, config);
   if (!candidate) {
     return withPaperStatus(account, { action: "no-signal", entriesToday });
   }
@@ -634,9 +666,13 @@ function healthPayload(env) {
     allocationPct: config.allocationPct,
     dailyLossLimitPct: config.dailyLossLimitPct,
     maxEntriesPerDay: config.maxEntriesPerDay,
+    minReturn15m: config.minReturn15m,
+    minReturn60m: config.minReturn60m,
+    minVolumeRatio: config.minVolumeRatio,
     mode: config.tradingEnabled ? "paper-enabled" : "paper-dry-run",
     paperOnly: true,
     reentryCooldownMinutes: config.reentryCooldownMinutes,
+    reversalReturn15m: config.reversalReturn15m,
     schedule: "every five minutes; Alpaca market clock gated",
     stopLossPct: config.stopLossPct,
     takeProfitPct: config.takeProfitPct,
@@ -675,6 +711,7 @@ export {
   momentumMetrics,
   paperAccountSummary,
   positionExitReason,
+  protectiveStopRequest,
   roundOrderPrice,
   runBot,
   selectMomentumCandidate,
