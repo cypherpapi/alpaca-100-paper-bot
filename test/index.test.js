@@ -29,19 +29,19 @@ function risingBars({ start = 100, step = 0.15, volume = 1000 } = {}) {
 }
 
 const baseEnv = {
-  ALLOCATION_PCT: "0.97",
-  DAILY_LOSS_LIMIT_PCT: "0.08",
+  ALLOCATION_PCT: "0.99",
+  DAILY_LOSS_LIMIT_PCT: "0.10",
   ENTRY_END_ET: "14:30",
   ENTRY_START_ET: "09:45",
   FORCE_EXIT_ET: "15:50",
-  MAX_ENTRIES_PER_DAY: "6",
+  MAX_ENTRIES_PER_DAY: "8",
   MIN_RETURN_15M: "0.0015",
   MIN_RETURN_60M: "0.003",
   MIN_VOLUME_RATIO: "0.65",
-  REENTRY_COOLDOWN_MINUTES: "10",
-  REVERSAL_RETURN_15M: "0.0015",
+  REENTRY_COOLDOWN_MINUTES: "5",
+  REVERSAL_RETURN_15M: "0.0025",
   STOP_LOSS_PCT: "0.04",
-  TAKE_PROFIT_PCT: "0.06",
+  TAKE_PROFIT_PCT: "0.12",
   TRADING_ENABLED: "false",
   UNIVERSE: "TQQQ,SQQQ",
 };
@@ -51,8 +51,8 @@ test("all trading traffic is pinned to Alpaca paper trading", () => {
   assert.equal(MARKET_DATA_BASE_URL, "https://data.alpaca.markets");
   assert.equal(healthPayload(baseEnv).paperOnly, true);
   assert.equal(healthPayload(baseEnv).mode, "paper-dry-run");
-  assert.equal(healthPayload(baseEnv).allocationPct, 0.97);
-  assert.equal(healthPayload(baseEnv).maxEntriesPerDay, 6);
+  assert.equal(healthPayload(baseEnv).allocationPct, 0.99);
+  assert.equal(healthPayload(baseEnv).maxEntriesPerDay, 8);
 });
 
 test("configuration rejects unsafe percentage values", () => {
@@ -107,7 +107,7 @@ test("risk controls force exits for loss, profit, reversal, and closing time", (
       config,
       metrics: null,
       now: midday,
-      position: { unrealized_plpc: "0.061" },
+      position: { unrealized_plpc: "0.121" },
     }),
     "take-profit",
   );
@@ -160,10 +160,10 @@ test("risk controls force exits for loss, profit, reversal, and closing time", (
 
 test("daily loss limit takes priority and order prices use valid precision", () => {
   const config = getConfig(baseEnv);
-  assert.ok(accountDailyReturn({ equity: "91", last_equity: "100" }) < -0.08);
+  assert.ok(accountDailyReturn({ equity: "89", last_equity: "100" }) < -0.1);
   assert.equal(
     positionExitReason({
-      account: { equity: "91", last_equity: "100" },
+      account: { equity: "89", last_equity: "100" },
       config,
       metrics: null,
       now: new Date("2026-09-03T17:00:00Z"),
@@ -228,8 +228,8 @@ test("multiple daily entries use order history and enforce a reentry cooldown", 
 test("new entries stop when the next planned stop could breach the daily loss cap", () => {
   const config = getConfig(baseEnv);
   assert.equal(canRiskAnotherEntry({ equity: "100", last_equity: "100" }, config), true);
-  assert.equal(canRiskAnotherEntry({ equity: "96.10", last_equity: "100" }, config), true);
-  assert.equal(canRiskAnotherEntry({ equity: "95.80", last_equity: "100" }, config), false);
+  assert.equal(canRiskAnotherEntry({ equity: "94.10", last_equity: "100" }, config), true);
+  assert.equal(canRiskAnotherEntry({ equity: "93.90", last_equity: "100" }, config), false);
 });
 
 test("fractional positions receive a four percent broker-side stop", () => {
