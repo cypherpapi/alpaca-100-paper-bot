@@ -52,10 +52,10 @@ function getConfig(env) {
     throw new Error("UNIVERSE must contain at least one symbol.");
   }
 
-  const allocationPct = percentFromEnv(env.ALLOCATION_PCT, 0.97);
+  const allocationPct = percentFromEnv(env.ALLOCATION_PCT, 0.99);
   const stopLossPct = percentFromEnv(env.STOP_LOSS_PCT, 0.04);
-  const takeProfitPct = percentFromEnv(env.TAKE_PROFIT_PCT, 0.06);
-  const dailyLossLimitPct = percentFromEnv(env.DAILY_LOSS_LIMIT_PCT, 0.08);
+  const takeProfitPct = percentFromEnv(env.TAKE_PROFIT_PCT, 0.12);
+  const dailyLossLimitPct = percentFromEnv(env.DAILY_LOSS_LIMIT_PCT, 0.1);
 
   return {
     allocationPct,
@@ -63,7 +63,7 @@ function getConfig(env) {
     entryEndMinutes: parseClock(env.ENTRY_END_ET, "14:30"),
     entryStartMinutes: parseClock(env.ENTRY_START_ET, "09:45"),
     forceExitMinutes: parseClock(env.FORCE_EXIT_ET, "15:50"),
-    maxEntriesPerDay: integerFromEnv(env.MAX_ENTRIES_PER_DAY, 6, {
+    maxEntriesPerDay: integerFromEnv(env.MAX_ENTRIES_PER_DAY, 8, {
       label: "MAX_ENTRIES_PER_DAY",
       maximum: 10,
       minimum: 1,
@@ -75,12 +75,12 @@ function getConfig(env) {
       maximum: 5,
       minimum: 0.1,
     }),
-    reentryCooldownMinutes: integerFromEnv(env.REENTRY_COOLDOWN_MINUTES, 10, {
+    reentryCooldownMinutes: integerFromEnv(env.REENTRY_COOLDOWN_MINUTES, 5, {
       label: "REENTRY_COOLDOWN_MINUTES",
       maximum: 120,
       minimum: 0,
     }),
-    reversalReturn15m: percentFromEnv(env.REVERSAL_RETURN_15M, 0.0015),
+    reversalReturn15m: percentFromEnv(env.REVERSAL_RETURN_15M, 0.0025),
     stopLossPct,
     takeProfitPct,
     tradingEnabled: env.TRADING_ENABLED === "true",
