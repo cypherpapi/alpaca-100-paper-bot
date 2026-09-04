@@ -8,24 +8,37 @@ import {
   canRiskAnotherEntry,
   cooldownRemainingMinutes,
   countDailyEntries,
+  detectMarketRegime,
   easternParts,
+  evaluateTrendCandidate,
   getConfig,
   healthPayload,
   latestBotExitTime,
+  latestPositionEntryOrder,
   momentumMetrics,
   paperAccountSummary,
+  peakReturnSinceEntry,
   positionExitReason,
   protectiveStopRequest,
+  rankTrendCandidates,
   roundOrderPrice,
   selectMomentumCandidate,
 } from "../src/index.js";
 
 function risingBars({ start = 100, step = 0.15, volume = 1000 } = {}) {
-  return Array.from({ length: 20 }, (_, index) => ({
-    c: start + index * step,
-    t: new Date(Date.UTC(2026, 8, 3, 14, index * 5)).toISOString(),
-    v: volume + index * 10,
-  }));
+  return Array.from({ length: 20 }, (_, index) => {
+    const close = start + index * step;
+    const spread = Math.max(Math.abs(step) * 3, 0.1);
+    return {
+      c: close,
+      h: close + spread,
+      l: close - spread,
+      o: close - step * 0.25,
+      t: new Date(Date.UTC(2026, 8, 3, 14, index * 5)).toISOString(),
+      v: volume + index * 10,
+      vw: close,
+    };
+  });
 }
 
 const baseEnv = {
@@ -34,11 +47,21 @@ const baseEnv = {
   ENTRY_END_ET: "14:30",
   ENTRY_START_ET: "09:45",
   FORCE_EXIT_ET: "15:50",
+  MAX_CHASE_DAY_RETURN_PCT: "0.06",
   MAX_ENTRIES_PER_DAY: "8",
+  MAX_HIGH_DISTANCE_PCT: "0.01",
+  MAX_VWAP_EXTENSION_ATR: "1.75",
+  MIN_HOLD_MINUTES: "20",
   MIN_RETURN_15M: "0.0015",
   MIN_RETURN_60M: "0.003",
+  MIN_TREND_SCORE: "55",
   MIN_VOLUME_RATIO: "0.65",
+  PROFIT_LOCK_FLOOR_PCT: "0.01",
+  PROFIT_LOCK_TRIGGER_PCT: "0.03",
+  PROFIT_TRAIL_DRAWDOWN_PCT: "0.02",
+  PROFIT_TRAIL_TRIGGER_PCT: "0.06",
   REENTRY_COOLDOWN_MINUTES: "5",
+  ROTATION_SCORE_GAP: "20",
   REVERSAL_RETURN_15M: "0.0025",
   STOP_LOSS_PCT: "0.04",
   TAKE_PROFIT_PCT: "0.12",
@@ -53,6 +76,7 @@ test("all trading traffic is pinned to Alpaca paper trading", () => {
   assert.equal(healthPayload(baseEnv).mode, "paper-dry-run");
   assert.equal(healthPayload(baseEnv).allocationPct, 0.99);
   assert.equal(healthPayload(baseEnv).maxEntriesPerDay, 8);
+  assert.equal(healthPayload(baseEnv).strategyVersion, "trend-hunter-v2");
 });
 
 test("configuration rejects unsafe percentage values", () => {
@@ -92,6 +116,50 @@ test("momentum selector skips falling markets", () => {
   const falling = risingBars({ start: 105, step: -0.2 });
   assert.equal(selectMomentumCandidate({ TQQQ: falling }, ["TQQQ"]), null);
   assert.ok(momentumMetrics(falling).price < momentumMetrics(falling).sma9);
+});
+
+test("trend scoring rejects a late chase near the daily high", () => {
+  const metrics = {
+    atr14: 1,
+    atrPct: 0.01,
+    breakout: true,
+    dayReturn: 0.085,
+    distanceFromHighPct: -0.003,
+    ema13: 99,
+    ema5: 100,
+    emaSpreadPct: 0.01,
+    price: 101,
+    pullbackRecovery: false,
+    return15m: 0.01,
+    return60m: 0.03,
+    rsi14: 70,
+    sessionReturn: 0.08,
+    sma9: 100,
+    volumeRatio: 1.5,
+    vwap: 100,
+    vwapExtensionAtr: 1,
+  };
+  const evaluation = evaluateTrendCandidate("TQQQ", metrics, getConfig(baseEnv), "bullish");
+  assert.equal(evaluation.qualified, false);
+  assert.ok(evaluation.reasons.includes("extended-near-day-high"));
+});
+
+test("rankings expose scores and market regime rewards aligned symbols", () => {
+  const rising = risingBars({ step: 0.3 });
+  const falling = risingBars({ start: 105, step: -0.3 });
+  assert.equal(detectMarketRegime({ QQQ: rising, SPY: rising }), "bullish");
+  assert.equal(detectMarketRegime({ QQQ: falling, SPY: falling }), "bearish");
+
+  const rankings = rankTrendCandidates(
+    { SQQQ: rising, TQQQ: rising },
+    ["TQQQ", "SQQQ"],
+    getConfig(baseEnv),
+    {},
+    "bullish",
+  );
+  assert.equal(rankings[0].symbol, "TQQQ");
+  assert.ok(rankings[0].score > rankings[1].score);
+  assert.equal(typeof rankings[0].score, "number");
 });
 
 test("risk controls force exits for loss, profit, reversal, and closing time", () => {
@@ -173,6 +241,93 @@ test("daily loss limit takes priority and order prices use valid precision", () 
   );
   assert.equal(roundOrderPrice(12.3456), "12.35");
   assert.equal(roundOrderPrice(0.123456), "0.1235");
+});
+
+test("profit protection, stalled exits, and stronger-trend rotation release capital", () => {
+  const config = getConfig(baseEnv);
+  const account = { equity: "100", last_equity: "100" };
+  const midday = new Date("2026-09-03T17:00:00Z");
+  const positiveMetrics = { price: 101, return15m: 0.004, sma9: 100 };
+
+  assert.equal(
+    positionExitReason({
+      account,
+      config,
+      metrics: positiveMetrics,
+      now: midday,
+      peakReturn: 0.07,
+      position: { unrealized_plpc: "0.045" },
+    }),
+    "profit-trailing-exit",
+  );
+  assert.equal(
+    positionExitReason({
+      account,
+      config,
+      metrics: positiveMetrics,
+      now: midday,
+      peakReturn: 0.035,
+      position: { unrealized_plpc: "0.008" },
+    }),
+    "profit-lock-exit",
+  );
+  assert.equal(
+    positionExitReason({
+      account,
+      config,
+      currentEvaluation: { qualified: false },
+      metrics: { price: 100, return15m: -0.001, sma9: 100 },
+      minutesHeld: 30,
+      now: midday,
+      position: { unrealized_plpc: "-0.002" },
+    }),
+    "stalled-trend-exit",
+  );
+  assert.equal(
+    positionExitReason({
+      account,
+      config,
+      currentEvaluation: { qualified: true },
+      metrics: positiveMetrics,
+      minutesHeld: 30,
+      now: midday,
+      position: { unrealized_plpc: "0.002" },
+      rotationCandidate: { scoreGap: 25, symbol: "SOXL" },
+    }),
+    "stronger-trend-rotation",
+  );
+});
+
+test("position history and observed bar highs support profit tracking", () => {
+  const orders = [
+    {
+      client_order_id: "cdbot-entry-20260903-1",
+      filled_at: "2026-09-03T15:00:00Z",
+      side: "buy",
+      status: "filled",
+      symbol: "TQQQ",
+    },
+    {
+      client_order_id: "cdbot-entry-20260904-1",
+      filled_at: "2026-09-04T15:00:00Z",
+      side: "buy",
+      status: "filled",
+      symbol: "TQQQ",
+    },
+  ];
+  assert.equal(latestPositionEntryOrder(orders, "TQQQ").filled_at, "2026-09-04T15:00:00Z");
+  assert.ok(
+    Math.abs(
+      peakReturnSinceEntry(
+        [
+          { c: 99, h: 100, t: "2026-09-04T14:55:00Z" },
+          { c: 102, h: 107, t: "2026-09-04T15:05:00Z" },
+        ],
+        100,
+        "2026-09-04T15:00:00Z",
+      ) - 0.07,
+    ) < Number.EPSILON,
+  );
 });
 
 test("multiple daily entries use order history and enforce a reentry cooldown", () => {
