@@ -8,18 +8,18 @@ This is a deliberately high-risk **paper-only** trading experiment for the separ
 - Trades only during regular U.S. market hours.
 - Scans leveraged bull/bear ETFs: `TQQQ`, `SQQQ`, `SOXL`, `SOXS`, `TNA`, `TZA`, `NVDL`, `NVDD`, `TSLL`, `TSLQ`, `LABU`, and `LABD`.
 - Buys the strongest qualifying 15-minute/60-minute momentum candidate using deliberately permissive momentum and volume thresholds.
-- Uses at most 97% of the paper account, holds one position at a time, and can make up to six entries per day.
-- Waits at least 10 minutes after an exit before considering another entry; a fresh momentum signal is still required.
+- Uses at most 99% of the paper account, holds one position at a time, and can make up to eight entries per day.
+- Waits at least five minutes after an exit before considering another entry; a fresh momentum signal is still required.
 - Adds a fixed 4% broker-side protective stop after a fill. A fixed stop is used because this small account trades fractional shares, for which Alpaca documents stop orders but not trailing stops.
-- Exits around a 6% gain, on a confirmed momentum reversal, or by 3:50 p.m. Eastern.
-- Locks out new entries after an 8% daily account loss.
+- Lets exceptional momentum runs reach a 12% gain, while still exiting on a confirmed momentum reversal or by 3:50 p.m. Eastern.
+- Locks out new entries after a 10% daily account loss.
 - Refuses a new entry when its planned stop could push the account beyond the daily loss limit.
 - Logs fill prices, realized trade results, equity, cash, and daily paper P/L for easier reporting.
 - Never shorts, uses options, borrows on margin, trades crypto, or holds intentionally overnight.
 
 Leveraged ETFs can move sharply and decay over time. The restrictions above reduce failure modes; they do not make the strategy safe or profitable. Paper fills can also be more favorable than real fills.
 
-The aggressive profile is capped at six entries rather than trading continuously. Additional trades only occur after a completed exit, the cooldown, and a new qualifying signal. Winning trades can create room for more attempts; two near-full-stop losses should normally prevent another entry through the projected-risk check. A 100% daily return is not a realistic repeatable target; this configuration is designed to test an aggressive hypothesis without pretending the paper results are guaranteed or directly transferable to live trading.
+The moonshot profile is capped at eight entries rather than trading continuously. Additional trades only occur after a completed exit, the cooldown, and a new qualifying signal. Winning trades can create room for more attempts; two near-full-stop losses should normally prevent another entry through the projected-risk check. The 12% target is per trade, not per year, and the momentum-reversal exit can close a trade earlier when the trend breaks.
 
 ## Required secrets
 
