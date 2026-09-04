@@ -27,11 +27,13 @@ jobs:
       STOP_LOSS_PCT: "0.02"
       TAKE_PROFIT_PCT: "0.03"
       DAILY_LOSS_LIMIT_PCT: "0.04"
+      MAX_ENTRIES_PER_DAY: "4"
+      REENTRY_COOLDOWN_MINUTES: "15"
       ENTRY_START_ET: "09:45"
       ENTRY_END_ET: "14:30"
       FORCE_EXIT_ET: "15:50"
     steps:
       - name: Check out bot
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Run paper bot once
         run: node src/run-once.js
