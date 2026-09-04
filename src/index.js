@@ -16,6 +16,14 @@ function percentFromEnv(value, fallback) {
   return parsed;
 }
 
+function integerFromEnv(value, fallback, { label, maximum, minimum }) {
+  const parsed = numberFromEnv(value, fallback);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${label} must be an integer from ${minimum} through ${maximum}.`);
+  }
+  return parsed;
+}
+
 function parseClock(value, fallback) {
   const candidate = value || fallback;
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(candidate)) {
@@ -46,6 +54,16 @@ function getConfig(env) {
     entryEndMinutes: parseClock(env.ENTRY_END_ET, "14:30"),
     entryStartMinutes: parseClock(env.ENTRY_START_ET, "09:45"),
     forceExitMinutes: parseClock(env.FORCE_EXIT_ET, "15:50"),
+    maxEntriesPerDay: integerFromEnv(env.MAX_ENTRIES_PER_DAY, 4, {
+      label: "MAX_ENTRIES_PER_DAY",
+      maximum: 10,
+      minimum: 1,
+    }),
+    reentryCooldownMinutes: integerFromEnv(env.REENTRY_COOLDOWN_MINUTES, 15, {
+      label: "REENTRY_COOLDOWN_MINUTES",
+      maximum: 120,
+      minimum: 0,
+    }),
     stopLossPct,
     takeProfitPct,
     tradingEnabled: env.TRADING_ENABLED === "true",
@@ -181,6 +199,92 @@ function accountDailyReturn(account) {
   return equity / lastEquity - 1;
 }
 
+function roundNumber(value, decimals = 2) {
+  if (!Number.isFinite(value)) return null;
+  const factor = 10 ** decimals;
+  return Math.round((value + Number.EPSILON) * factor) / factor;
+}
+
+function paperAccountSummary(account) {
+  const equity = Number(account.equity);
+  const lastEquity = Number(account.last_equity);
+  const cash = Number(account.cash);
+  const dailyReturn = accountDailyReturn(account);
+  return {
+    cash: roundNumber(cash),
+    dailyPl: roundNumber(equity - lastEquity),
+    dailyReturnPct: roundNumber(dailyReturn * 100, 4),
+    equity: roundNumber(equity),
+    lastEquity: roundNumber(lastEquity),
+  };
+}
+
+function withPaperStatus(account, payload) {
+  return {
+    ...payload,
+    account: paperAccountSummary(account),
+    paperOnly: true,
+  };
+}
+
+function isDailyBotEntry(order, dateTag) {
+  return order.client_order_id?.startsWith(`${ORDER_PREFIX}-entry-${dateTag}`) || false;
+}
+
+function dailyEntryOrders(allOrders, dateTag) {
+  return allOrders.filter((order) => isDailyBotEntry(order, dateTag));
+}
+
+function countDailyEntries(allOrders, dateTag) {
+  return dailyEntryOrders(allOrders, dateTag).length;
+}
+
+function tradeSequenceFromClientOrderId(clientOrderId, dateTag) {
+  const base = `${ORDER_PREFIX}-entry-${dateTag}`;
+  if (clientOrderId === base) return 1;
+  const match = clientOrderId?.match(new RegExp(`^${base}-(\\d+)$`));
+  return match ? Number(match[1]) : null;
+}
+
+function positionTradeSequence(allOrders, dateTag, symbol) {
+  const matching = dailyEntryOrders(allOrders, dateTag)
+    .filter((order) => order.side === "buy" && order.symbol === symbol)
+    .sort(
+      (a, b) =>
+        new Date(b.filled_at || b.submitted_at || b.created_at) -
+        new Date(a.filled_at || a.submitted_at || a.created_at),
+    );
+  return tradeSequenceFromClientOrderId(matching[0]?.client_order_id, dateTag) ||
+    Math.max(1, countDailyEntries(allOrders, dateTag));
+}
+
+function latestBotExitTime(allOrders, dateTag) {
+  const prefixes = [`${ORDER_PREFIX}-exit-${dateTag}`, `${ORDER_PREFIX}-stop-${dateTag}`];
+  const timestamps = allOrders
+    .filter(
+      (order) =>
+        order.side === "sell" &&
+        order.status === "filled" &&
+        prefixes.some((prefix) => order.client_order_id?.startsWith(prefix)),
+    )
+    .map((order) => new Date(order.filled_at || order.updated_at || order.created_at))
+    .filter((date) => Number.isFinite(date.getTime()));
+  if (timestamps.length === 0) return null;
+  return new Date(Math.max(...timestamps.map((date) => date.getTime())));
+}
+
+function cooldownRemainingMinutes(now, lastExitAt, cooldownMinutes) {
+  if (!lastExitAt || cooldownMinutes <= 0) return 0;
+  const remainingMs = cooldownMinutes * 60_000 - (now.getTime() - lastExitAt.getTime());
+  return Math.max(0, Math.ceil(remainingMs / 60_000));
+}
+
+function canRiskAnotherEntry(account, config) {
+  const projectedDailyReturn =
+    accountDailyReturn(account) - config.allocationPct * config.stopLossPct;
+  return projectedDailyReturn > -config.dailyLossLimitPct;
+}
+
 function positionExitReason({ account, config, metrics, now, position }) {
   const { minutes } = easternParts(now);
   const unrealizedReturn = Number(position.unrealized_plpc || 0);
@@ -243,7 +347,14 @@ async function cancelSymbolOrders(env, openOrders, symbol) {
   }
 }
 
-async function ensureProtectiveStop(env, config, position, openOrders, dateTag) {
+async function ensureProtectiveStop(
+  env,
+  config,
+  position,
+  openOrders,
+  dateTag,
+  tradeSequence,
+) {
   const existing = openOrders.find(
     (order) =>
       order.symbol === position.symbol &&
@@ -256,7 +367,7 @@ async function ensureProtectiveStop(env, config, position, openOrders, dateTag) 
   const stopPrice = roundOrderPrice(averageEntry * (1 - config.stopLossPct));
   const order = await tradingRequest(env, "/v2/orders", {
     body: JSON.stringify({
-      client_order_id: `${ORDER_PREFIX}-stop-${dateTag}`,
+      client_order_id: `${ORDER_PREFIX}-stop-${dateTag}-${tradeSequence}`,
       qty: position.qty,
       side: "sell",
       stop_price: stopPrice,
@@ -269,16 +380,27 @@ async function ensureProtectiveStop(env, config, position, openOrders, dateTag) 
   return { action: "protective-stop-submitted", orderId: order.id, stopPrice };
 }
 
-async function closePosition(env, position, openOrders, dateTag, reason) {
+async function waitForOrderResult(env, orderId) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const order = await tradingRequest(env, `/v2/orders/${orderId}`);
+    if (order.status === "filled") return order;
+    if (["canceled", "expired", "rejected", "suspended"].includes(order.status)) return order;
+    await sleep(750);
+  }
+  return tradingRequest(env, `/v2/orders/${orderId}`);
+}
+
+async function closePosition(env, position, openOrders, dateTag, tradeSequence, reason) {
+  const exitClientOrderId = `${ORDER_PREFIX}-exit-${dateTag}-${tradeSequence}`;
   const existingExit = openOrders.find(
-    (order) => order.client_order_id === `${ORDER_PREFIX}-exit-${dateTag}`,
+    (order) => order.client_order_id === exitClientOrderId,
   );
   if (existingExit) return { action: "exit-already-open", orderId: existingExit.id, reason };
 
   await cancelSymbolOrders(env, openOrders, position.symbol);
   const order = await tradingRequest(env, "/v2/orders", {
     body: JSON.stringify({
-      client_order_id: `${ORDER_PREFIX}-exit-${dateTag}`,
+      client_order_id: exitClientOrderId,
       qty: position.qty,
       side: "sell",
       symbol: position.symbol,
@@ -287,15 +409,53 @@ async function closePosition(env, position, openOrders, dateTag, reason) {
     }),
     method: "POST",
   });
-  return { action: "exit-submitted", orderId: order.id, reason, symbol: position.symbol };
+  const completed = await waitForOrderResult(env, order.id);
+  if (completed.status !== "filled") {
+    return {
+      action: "exit-submitted",
+      orderId: order.id,
+      reason,
+      status: completed.status,
+      symbol: position.symbol,
+      tradeSequence,
+    };
+  }
+
+  const entryPrice = Number(position.avg_entry_price);
+  const exitPrice = Number(completed.filled_avg_price);
+  const filledQty = Number(completed.filled_qty || position.qty);
+  return {
+    action: "exit-filled",
+    entryPrice: roundNumber(entryPrice, 4),
+    exitPrice: roundNumber(exitPrice, 4),
+    filledQty: roundNumber(filledQty, 6),
+    orderId: order.id,
+    realizedPl: roundNumber((exitPrice - entryPrice) * filledQty),
+    realizedReturnPct: roundNumber((exitPrice / entryPrice - 1) * 100, 4),
+    reason,
+    symbol: position.symbol,
+    tradeSequence,
+  };
 }
 
-async function protectFilledEntry(env, config, order, openOrders, dateTag) {
+async function protectFilledEntry(env, config, order, openOrders, dateTag, tradeSequence) {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const current = await tradingRequest(env, `/v2/orders/${order.id}`);
     if (current.status === "filled") {
       const position = await tradingRequest(env, `/v2/positions/${order.symbol}`);
-      return ensureProtectiveStop(env, config, position, openOrders, dateTag);
+      return {
+        action: "entry-filled-protected",
+        fillPrice: roundNumber(Number(current.filled_avg_price), 4),
+        filledQty: roundNumber(Number(current.filled_qty), 6),
+        protection: await ensureProtectiveStop(
+          env,
+          config,
+          position,
+          openOrders,
+          dateTag,
+          tradeSequence,
+        ),
+      };
     }
     if (["canceled", "expired", "rejected", "suspended"].includes(current.status)) {
       return { action: "entry-not-filled", status: current.status };
@@ -313,10 +473,10 @@ async function runBot(env, now = new Date()) {
   const account = await tradingRequest(env, "/v2/account");
 
   if (account.account_blocked || account.trading_blocked) {
-    return { action: "blocked-account", paperOnly: true };
+    return withPaperStatus(account, { action: "blocked-account" });
   }
   if (!clock.is_open) {
-    return { action: "market-closed", paperOnly: true };
+    return withPaperStatus(account, { action: "market-closed" });
   }
 
   const [positions, openOrders, allOrders] = await Promise.all([
@@ -332,38 +492,87 @@ async function runBot(env, now = new Date()) {
     const position = positions[0];
     const metrics = momentumMetrics(barsBySymbol[position.symbol]);
     const reason = positionExitReason({ account, config, metrics, now, position });
+    const tradeSequence = positionTradeSequence(allOrders, dateTag, position.symbol);
     if (!config.tradingEnabled) {
-      return { action: "dry-run-position", paperOnly: true, reason, symbol: position.symbol };
+      return withPaperStatus(account, {
+        action: "dry-run-position",
+        reason,
+        symbol: position.symbol,
+        tradeSequence,
+      });
     }
     if (reason) {
-      return { ...(await closePosition(env, position, openOrders, dateTag, reason)), paperOnly: true };
+      return withPaperStatus(
+        account,
+        await closePosition(env, position, openOrders, dateTag, tradeSequence, reason),
+      );
     }
-    return {
-      ...(await ensureProtectiveStop(env, config, position, openOrders, dateTag)),
-      paperOnly: true,
+    return withPaperStatus(account, {
+      ...(await ensureProtectiveStop(
+        env,
+        config,
+        position,
+        openOrders,
+        dateTag,
+        tradeSequence,
+      )),
       symbol: position.symbol,
-    };
+      tradeSequence,
+      unrealizedReturnPct: roundNumber(Number(position.unrealized_plpc) * 100, 4),
+    });
   }
 
   if (accountDailyReturn(account) <= -config.dailyLossLimitPct) {
-    return { action: "daily-loss-lockout", paperOnly: true };
+    return withPaperStatus(account, { action: "daily-loss-lockout" });
   }
   if (minutes < config.entryStartMinutes || minutes > config.entryEndMinutes) {
-    return { action: "outside-entry-window", paperOnly: true };
+    return withPaperStatus(account, { action: "outside-entry-window" });
   }
   if (openOrders.length > 0) {
-    return { action: "open-order-present", paperOnly: true };
+    return withPaperStatus(account, { action: "open-order-present" });
   }
-  if (allOrders.some((order) => order.client_order_id?.startsWith(`${ORDER_PREFIX}-entry-${dateTag}`))) {
-    return { action: "daily-entry-already-used", paperOnly: true };
+
+  const entriesToday = countDailyEntries(allOrders, dateTag);
+  if (entriesToday >= config.maxEntriesPerDay) {
+    return withPaperStatus(account, {
+      action: "daily-entry-limit-reached",
+      entriesToday,
+      maxEntriesPerDay: config.maxEntriesPerDay,
+    });
+  }
+
+  const lastExitAt = latestBotExitTime(allOrders, dateTag);
+  const cooldownMinutesRemaining = cooldownRemainingMinutes(
+    now,
+    lastExitAt,
+    config.reentryCooldownMinutes,
+  );
+  if (cooldownMinutesRemaining > 0) {
+    return withPaperStatus(account, {
+      action: "reentry-cooldown",
+      cooldownMinutesRemaining,
+      entriesToday,
+    });
+  }
+
+  if (!canRiskAnotherEntry(account, config)) {
+    return withPaperStatus(account, {
+      action: "daily-risk-lockout",
+      entriesToday,
+    });
   }
 
   const candidate = selectMomentumCandidate(barsBySymbol, config.universe);
-  if (!candidate) return { action: "no-signal", paperOnly: true };
+  if (!candidate) {
+    return withPaperStatus(account, { action: "no-signal", entriesToday });
+  }
 
   const asset = await tradingRequest(env, `/v2/assets/${encodeURIComponent(candidate.symbol)}`);
   if (!asset.tradable || !asset.fractionable || asset.status !== "active") {
-    return { action: "asset-not-eligible", paperOnly: true, symbol: candidate.symbol };
+    return withPaperStatus(account, {
+      action: "asset-not-eligible",
+      symbol: candidate.symbol,
+    });
   }
 
   const available = Math.min(
@@ -373,22 +582,25 @@ async function runBot(env, now = new Date()) {
   );
   const notional = Math.floor(available * config.allocationPct * 100) / 100;
   if (!Number.isFinite(notional) || notional < 1) {
-    return { action: "insufficient-paper-cash", paperOnly: true };
+    return withPaperStatus(account, { action: "insufficient-paper-cash" });
   }
 
+  const tradeSequence = entriesToday + 1;
+
   if (!config.tradingEnabled) {
-    return {
+    return withPaperStatus(account, {
       action: "dry-run-entry",
+      entriesToday,
       notional,
-      paperOnly: true,
       score: candidate.metrics.score,
       symbol: candidate.symbol,
-    };
+      tradeSequence,
+    });
   }
 
   const order = await tradingRequest(env, "/v2/orders", {
     body: JSON.stringify({
-      client_order_id: `${ORDER_PREFIX}-entry-${dateTag}`,
+      client_order_id: `${ORDER_PREFIX}-entry-${dateTag}-${tradeSequence}`,
       notional: notional.toFixed(2),
       side: "buy",
       symbol: candidate.symbol,
@@ -397,15 +609,23 @@ async function runBot(env, now = new Date()) {
     }),
     method: "POST",
   });
-  const protection = await protectFilledEntry(env, config, order, openOrders, dateTag);
-  return {
+  const protection = await protectFilledEntry(
+    env,
+    config,
+    order,
+    openOrders,
+    dateTag,
+    tradeSequence,
+  );
+  return withPaperStatus(account, {
     action: "entry-submitted",
+    entriesToday: entriesToday + 1,
     notional,
     orderId: order.id,
-    paperOnly: true,
     protection,
     symbol: candidate.symbol,
-  };
+    tradeSequence,
+  });
 }
 
 function healthPayload(env) {
@@ -413,8 +633,10 @@ function healthPayload(env) {
   return {
     allocationPct: config.allocationPct,
     dailyLossLimitPct: config.dailyLossLimitPct,
+    maxEntriesPerDay: config.maxEntriesPerDay,
     mode: config.tradingEnabled ? "paper-enabled" : "paper-dry-run",
     paperOnly: true,
+    reentryCooldownMinutes: config.reentryCooldownMinutes,
     schedule: "every five minutes; Alpaca market clock gated",
     stopLossPct: config.stopLossPct,
     takeProfitPct: config.takeProfitPct,
@@ -443,10 +665,15 @@ export {
   MARKET_DATA_BASE_URL,
   PAPER_TRADING_BASE_URL,
   accountDailyReturn,
+  canRiskAnotherEntry,
+  cooldownRemainingMinutes,
+  countDailyEntries,
   easternParts,
   getConfig,
   healthPayload,
+  latestBotExitTime,
   momentumMetrics,
+  paperAccountSummary,
   positionExitReason,
   roundOrderPrice,
   runBot,
