@@ -18,6 +18,7 @@ import {
   momentumMetrics,
   paperAccountSummary,
   peakReturnSinceEntry,
+  profitProtectedStopPrice,
   positionExitReason,
   protectiveStopRequest,
   rankTrendCandidates,
@@ -43,28 +44,28 @@ function risingBars({ start = 100, step = 0.15, volume = 1000 } = {}) {
 
 const baseEnv = {
   ALLOCATION_PCT: "0.99",
-  DAILY_LOSS_LIMIT_PCT: "0.10",
-  ENTRY_END_ET: "14:30",
-  ENTRY_START_ET: "09:45",
+  DAILY_LOSS_LIMIT_PCT: "0.12",
+  ENTRY_END_ET: "15:15",
+  ENTRY_START_ET: "09:35",
   FORCE_EXIT_ET: "15:50",
-  MAX_CHASE_DAY_RETURN_PCT: "0.06",
-  MAX_ENTRIES_PER_DAY: "8",
+  MAX_CHASE_DAY_RETURN_PCT: "0.08",
+  MAX_ENTRIES_PER_DAY: "12",
   MAX_HIGH_DISTANCE_PCT: "0.01",
-  MAX_VWAP_EXTENSION_ATR: "1.75",
-  MIN_HOLD_MINUTES: "20",
-  MIN_RETURN_15M: "0.0015",
-  MIN_RETURN_60M: "0.003",
-  MIN_TREND_SCORE: "55",
-  MIN_VOLUME_RATIO: "0.65",
-  PROFIT_LOCK_FLOOR_PCT: "0.01",
-  PROFIT_LOCK_TRIGGER_PCT: "0.03",
-  PROFIT_TRAIL_DRAWDOWN_PCT: "0.02",
-  PROFIT_TRAIL_TRIGGER_PCT: "0.06",
-  REENTRY_COOLDOWN_MINUTES: "5",
-  ROTATION_SCORE_GAP: "20",
-  REVERSAL_RETURN_15M: "0.0025",
-  STOP_LOSS_PCT: "0.04",
-  TAKE_PROFIT_PCT: "0.12",
+  MAX_VWAP_EXTENSION_ATR: "2.0",
+  MIN_HOLD_MINUTES: "10",
+  MIN_RETURN_15M: "0.001",
+  MIN_RETURN_60M: "0.002",
+  MIN_TREND_SCORE: "52",
+  MIN_VOLUME_RATIO: "0.55",
+  PROFIT_LOCK_FLOOR_PCT: "0.0025",
+  PROFIT_LOCK_TRIGGER_PCT: "0.0075",
+  PROFIT_TRAIL_DRAWDOWN_PCT: "0.005",
+  PROFIT_TRAIL_TRIGGER_PCT: "0.015",
+  REENTRY_COOLDOWN_MINUTES: "0",
+  ROTATION_SCORE_GAP: "15",
+  REVERSAL_RETURN_15M: "0.0015",
+  STOP_LOSS_PCT: "0.03",
+  TAKE_PROFIT_PCT: "0.04",
   TRADING_ENABLED: "false",
   UNIVERSE: "TQQQ,SQQQ",
 };
@@ -75,8 +76,8 @@ test("all trading traffic is pinned to Alpaca paper trading", () => {
   assert.equal(healthPayload(baseEnv).paperOnly, true);
   assert.equal(healthPayload(baseEnv).mode, "paper-dry-run");
   assert.equal(healthPayload(baseEnv).allocationPct, 0.99);
-  assert.equal(healthPayload(baseEnv).maxEntriesPerDay, 8);
-  assert.equal(healthPayload(baseEnv).strategyVersion, "trend-hunter-v2");
+  assert.equal(healthPayload(baseEnv).maxEntriesPerDay, 12);
+  assert.equal(healthPayload(baseEnv).strategyVersion, "trend-hunter-v3-aggressive");
 });
 
 test("configuration rejects unsafe percentage values", () => {
@@ -84,7 +85,7 @@ test("configuration rejects unsafe percentage values", () => {
   assert.throws(() => getConfig({ ...baseEnv, ALLOCATION_PCT: "0" }), /greater than 0/);
   assert.throws(
     () => getConfig({ ...baseEnv, MAX_ENTRIES_PER_DAY: "4.5" }),
-    /integer from 1 through 10/,
+    /integer from 1 through 20/,
   );
   assert.throws(
     () => getConfig({ ...baseEnv, REENTRY_COOLDOWN_MINUTES: "121" }),
@@ -165,7 +166,7 @@ test("rankings expose scores and market regime rewards aligned symbols", () => {
 test("risk controls force exits for loss, profit, reversal, and closing time", () => {
   const config = getConfig(baseEnv);
   const account = { equity: "100", last_equity: "100" };
-  const position = { unrealized_plpc: "-0.041" };
+  const position = { unrealized_plpc: "-0.031" };
   const midday = new Date("2026-09-03T17:00:00Z");
   assert.equal(positionExitReason({ account, config, metrics: null, now: midday, position }), "position-stop");
 
@@ -175,7 +176,7 @@ test("risk controls force exits for loss, profit, reversal, and closing time", (
       config,
       metrics: null,
       now: midday,
-      position: { unrealized_plpc: "0.121" },
+      position: { unrealized_plpc: "0.041" },
     }),
     "take-profit",
   );
@@ -228,10 +229,10 @@ test("risk controls force exits for loss, profit, reversal, and closing time", (
 
 test("daily loss limit takes priority and order prices use valid precision", () => {
   const config = getConfig(baseEnv);
-  assert.ok(accountDailyReturn({ equity: "89", last_equity: "100" }) < -0.1);
+  assert.ok(accountDailyReturn({ equity: "87", last_equity: "100" }) < -0.12);
   assert.equal(
     positionExitReason({
-      account: { equity: "89", last_equity: "100" },
+      account: { equity: "87", last_equity: "100" },
       config,
       metrics: null,
       now: new Date("2026-09-03T17:00:00Z"),
@@ -255,8 +256,8 @@ test("profit protection, stalled exits, and stronger-trend rotation release capi
       config,
       metrics: positiveMetrics,
       now: midday,
-      peakReturn: 0.07,
-      position: { unrealized_plpc: "0.045" },
+      peakReturn: 0.02,
+      position: { unrealized_plpc: "0.012" },
     }),
     "profit-trailing-exit",
   );
@@ -266,8 +267,8 @@ test("profit protection, stalled exits, and stronger-trend rotation release capi
       config,
       metrics: positiveMetrics,
       now: midday,
-      peakReturn: 0.035,
-      position: { unrealized_plpc: "0.008" },
+      peakReturn: 0.01,
+      position: { unrealized_plpc: "0.002" },
     }),
     "profit-lock-exit",
   );
@@ -383,11 +384,11 @@ test("multiple daily entries use order history and enforce a reentry cooldown", 
 test("new entries stop when the next planned stop could breach the daily loss cap", () => {
   const config = getConfig(baseEnv);
   assert.equal(canRiskAnotherEntry({ equity: "100", last_equity: "100" }, config), true);
-  assert.equal(canRiskAnotherEntry({ equity: "94.10", last_equity: "100" }, config), true);
-  assert.equal(canRiskAnotherEntry({ equity: "93.90", last_equity: "100" }, config), false);
+  assert.equal(canRiskAnotherEntry({ equity: "91.10", last_equity: "100" }, config), true);
+  assert.equal(canRiskAnotherEntry({ equity: "90.90", last_equity: "100" }, config), false);
 });
 
-test("fractional positions receive a four percent broker-side stop", () => {
+test("fractional positions receive a three percent broker-side stop", () => {
   const request = protectiveStopRequest(
     getConfig(baseEnv),
     { avg_entry_price: "100", qty: "0.97", symbol: "TQQQ" },
@@ -398,11 +399,23 @@ test("fractional positions receive a four percent broker-side stop", () => {
     client_order_id: "cdbot-stop-20260904-2",
     qty: "0.97",
     side: "sell",
-    stop_price: "96.00",
+    stop_price: "97.00",
     symbol: "TQQQ",
     time_in_force: "day",
     type: "stop",
   });
+});
+
+test("paper profit protection raises the broker stop as gains build", () => {
+  const config = getConfig(baseEnv);
+  const position = { avg_entry_price: "100", qty: "0.97", symbol: "TQQQ" };
+  assert.equal(roundOrderPrice(profitProtectedStopPrice(config, position, 0)), "97.00");
+  assert.equal(roundOrderPrice(profitProtectedStopPrice(config, position, 0.008)), "100.25");
+  assert.equal(roundOrderPrice(profitProtectedStopPrice(config, position, 0.02)), "101.50");
+  assert.equal(
+    protectiveStopRequest(config, position, "20260904", 2, 100.25).stop_price,
+    "100.25",
+  );
 });
 
 test("paper account summaries make daily results visible without exposing credentials", () => {
