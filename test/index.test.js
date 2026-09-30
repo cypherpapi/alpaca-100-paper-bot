@@ -61,13 +61,12 @@ const baseEnv = {
   MIN_VOLUME_RATIO: "0.65",
   PROFIT_LOCK_FLOOR_PCT: "0.001",
   PROFIT_LOCK_TRIGGER_PCT: "0.005",
-  PROFIT_TRAIL_DRAWDOWN_PCT: "0.0035",
+  PROFIT_TRAIL_DRAWDOWN_PCT: "0.0075",
   PROFIT_TRAIL_TRIGGER_PCT: "0.01",
   REENTRY_COOLDOWN_MINUTES: "5",
   ROTATION_SCORE_GAP: "15",
   REVERSAL_RETURN_15M: "0.0015",
   STOP_LOSS_PCT: "0.02",
-  TAKE_PROFIT_PCT: "0.04",
   TRADING_ENABLED: "false",
   UNIVERSE: "TQQQ,SQQQ",
 };
@@ -165,7 +164,7 @@ test("rankings expose scores and market regime rewards aligned symbols", () => {
   assert.equal(typeof rankings[0].score, "number");
 });
 
-test("risk controls force exits for loss, profit, reversal, and closing time", () => {
+test("risk controls force exits for loss, trailing profit, reversal, and closing time", () => {
   const config = getConfig(baseEnv);
   const account = { equity: "100", last_equity: "100" };
   const position = { unrealized_plpc: "-0.021" };
@@ -178,9 +177,22 @@ test("risk controls force exits for loss, profit, reversal, and closing time", (
       config,
       metrics: null,
       now: midday,
-      position: { unrealized_plpc: "0.041" },
+      peakReturn: 0.10,
+      position: { unrealized_plpc: "0.10" },
     }),
-    "take-profit",
+    null,
+  );
+
+  assert.equal(
+    positionExitReason({
+      account,
+      config,
+      metrics: null,
+      now: midday,
+      peakReturn: 0.10,
+      position: { unrealized_plpc: "0.0924" },
+    }),
+    "profit-trailing-exit",
   );
 
   assert.equal(
@@ -420,7 +432,7 @@ test("paper profit protection raises the broker stop as gains build", () => {
   };
   assert.equal(roundOrderPrice(profitProtectedStopPrice(config, position, 0)), "98.00");
   assert.equal(roundOrderPrice(profitProtectedStopPrice(config, position, 0.006)), "100.10");
-  assert.equal(roundOrderPrice(profitProtectedStopPrice(config, position, 0.02)), "101.65");
+  assert.equal(roundOrderPrice(profitProtectedStopPrice(config, position, 0.02)), "101.25");
   assert.equal(
     protectiveStopRequest(config, position, "20260904", 2, 100.25).stop_price,
     "100.25",
