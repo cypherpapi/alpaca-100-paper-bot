@@ -15,10 +15,10 @@ This is a deliberately high-risk **paper-only** trading experiment for the separ
 - Uses at most 99% of the paper account, holds one position at a time, and can make up to 3 entries per day.
 - Requires a five-minute cooldown after an exit before a fresh signal may qualify.
 - Adds a fixed 2% broker-side protective stop after a fill.
-- Once an observed gain reaches 0.5%, raises the resting Alpaca paper stop to protect approximately +0.1%. Once the gain reaches 1%, it raises that stop again to trail the peak by 0.35 percentage points. Software exits provide the same protection when price has already crossed the intended level.
+- Once an observed gain reaches 0.5%, raises the resting Alpaca paper stop to protect approximately +0.1%. Once the gain reaches 1%, it raises that stop again to trail the peak by 0.75 percentage points. Software exits provide the same protection when price has already crossed the intended level.
 - After a 10-minute minimum hold, exits a flat or losing position whose trend no longer qualifies.
 - After the minimum hold, rotates out when a different qualified symbol leads the held symbol by at least 15 score points. The next scheduled run must independently requalify the new leader before entry.
-- Takes a hard profit at 4% rather than waiting for the former 12% moonshot target.
+- Has no hard profit target. Winning positions may keep running while making new highs; the trailing protection exits only after a pullback of approximately 0.75 percentage points from the observed peak.
 - Still exits on a confirmed momentum reversal or by 3:50 p.m. Eastern.
 - Locks out new entries after a 4% daily account loss.
 - Refuses a new entry when its planned stop could push the account beyond the daily loss limit.
