@@ -2,10 +2,10 @@ const PAPER_TRADING_BASE_URL = "https://paper-api.alpaca.markets";
 const MARKET_DATA_BASE_URL = "https://data.alpaca.markets";
 const NEW_YORK_TIME_ZONE = "America/New_York";
 const ORDER_PREFIX = "cdbot";
-const STRATEGY_VERSION = "trend-hunter-v3-aggressive";
+const STRATEGY_VERSION = "trend-hunter-v4-selective-aggressive";
 const BENCHMARK_SYMBOLS = ["SPY", "QQQ"];
-const BULLISH_SYMBOLS = new Set(["TQQQ", "SOXL", "TNA", "NVDL", "TSLL", "LABU"]);
-const BEARISH_SYMBOLS = new Set(["SQQQ", "SOXS", "TZA", "NVDD", "TSLQ", "LABD"]);
+const BULLISH_SYMBOLS = new Set(["TQQQ", "SOXL", "TNA", "NVDL", "TSLL"]);
+const BEARISH_SYMBOLS = new Set(["SQQQ", "SOXS", "TZA", "NVDD", "TSLQ"]);
 
 function numberFromEnv(value, fallback) {
   const parsed = Number(value);
@@ -47,7 +47,7 @@ function parseClock(value, fallback) {
 
 function getConfig(env) {
   const universe =
-    (env.UNIVERSE || "TQQQ,SQQQ,SOXL,SOXS,TNA,TZA,NVDL,NVDD,TSLL,TSLQ,LABU,LABD")
+    (env.UNIVERSE || "TQQQ,SQQQ,SOXL,SOXS,TNA,TZA,NVDL,NVDD,TSLL,TSLQ")
     .split(",")
     .map((symbol) => symbol.trim().toUpperCase())
     .filter(Boolean);
@@ -57,24 +57,24 @@ function getConfig(env) {
   }
 
   const allocationPct = percentFromEnv(env.ALLOCATION_PCT, 0.99);
-  const stopLossPct = percentFromEnv(env.STOP_LOSS_PCT, 0.03);
+  const stopLossPct = percentFromEnv(env.STOP_LOSS_PCT, 0.02);
   const takeProfitPct = percentFromEnv(env.TAKE_PROFIT_PCT, 0.04);
-  const dailyLossLimitPct = percentFromEnv(env.DAILY_LOSS_LIMIT_PCT, 0.12);
+  const dailyLossLimitPct = percentFromEnv(env.DAILY_LOSS_LIMIT_PCT, 0.04);
 
   return {
     allocationPct,
     dailyLossLimitPct,
-    entryEndMinutes: parseClock(env.ENTRY_END_ET, "15:15"),
-    entryStartMinutes: parseClock(env.ENTRY_START_ET, "09:35"),
+    entryEndMinutes: parseClock(env.ENTRY_END_ET, "14:30"),
+    entryStartMinutes: parseClock(env.ENTRY_START_ET, "09:40"),
     forceExitMinutes: parseClock(env.FORCE_EXIT_ET, "15:50"),
-    maxEntriesPerDay: integerFromEnv(env.MAX_ENTRIES_PER_DAY, 12, {
+    maxEntriesPerDay: integerFromEnv(env.MAX_ENTRIES_PER_DAY, 3, {
       label: "MAX_ENTRIES_PER_DAY",
       maximum: 20,
       minimum: 1,
     }),
-    maxChaseDayReturnPct: percentFromEnv(env.MAX_CHASE_DAY_RETURN_PCT, 0.08),
+    maxChaseDayReturnPct: percentFromEnv(env.MAX_CHASE_DAY_RETURN_PCT, 0.06),
     maxHighDistancePct: percentFromEnv(env.MAX_HIGH_DISTANCE_PCT, 0.01),
-    maxVwapExtensionAtr: boundedNumberFromEnv(env.MAX_VWAP_EXTENSION_ATR, 2, {
+    maxVwapExtensionAtr: boundedNumberFromEnv(env.MAX_VWAP_EXTENSION_ATR, 1.75, {
       label: "MAX_VWAP_EXTENSION_ATR",
       maximum: 5,
       minimum: 0.25,
@@ -84,27 +84,27 @@ function getConfig(env) {
       maximum: 240,
       minimum: 0,
     }),
-    minReturn15m: percentFromEnv(env.MIN_RETURN_15M, 0.001),
-    minReturn60m: percentFromEnv(env.MIN_RETURN_60M, 0.002),
-    minTrendScore: boundedNumberFromEnv(env.MIN_TREND_SCORE, 52, {
+    minReturn15m: percentFromEnv(env.MIN_RETURN_15M, 0.0015),
+    minReturn60m: percentFromEnv(env.MIN_RETURN_60M, 0.003),
+    minTrendScore: boundedNumberFromEnv(env.MIN_TREND_SCORE, 60, {
       label: "MIN_TREND_SCORE",
       maximum: 100,
       minimum: 0,
     }),
-    minVolumeRatio: boundedNumberFromEnv(env.MIN_VOLUME_RATIO, 0.55, {
+    minVolumeRatio: boundedNumberFromEnv(env.MIN_VOLUME_RATIO, 0.65, {
       label: "MIN_VOLUME_RATIO",
       maximum: 5,
       minimum: 0.1,
     }),
-    reentryCooldownMinutes: integerFromEnv(env.REENTRY_COOLDOWN_MINUTES, 0, {
+    reentryCooldownMinutes: integerFromEnv(env.REENTRY_COOLDOWN_MINUTES, 5, {
       label: "REENTRY_COOLDOWN_MINUTES",
       maximum: 120,
       minimum: 0,
     }),
-    profitLockFloorPct: percentFromEnv(env.PROFIT_LOCK_FLOOR_PCT, 0.0025),
-    profitLockTriggerPct: percentFromEnv(env.PROFIT_LOCK_TRIGGER_PCT, 0.0075),
-    profitTrailDrawdownPct: percentFromEnv(env.PROFIT_TRAIL_DRAWDOWN_PCT, 0.005),
-    profitTrailTriggerPct: percentFromEnv(env.PROFIT_TRAIL_TRIGGER_PCT, 0.015),
+    profitLockFloorPct: percentFromEnv(env.PROFIT_LOCK_FLOOR_PCT, 0.001),
+    profitLockTriggerPct: percentFromEnv(env.PROFIT_LOCK_TRIGGER_PCT, 0.005),
+    profitTrailDrawdownPct: percentFromEnv(env.PROFIT_TRAIL_DRAWDOWN_PCT, 0.0035),
+    profitTrailTriggerPct: percentFromEnv(env.PROFIT_TRAIL_TRIGGER_PCT, 0.01),
     rotationScoreGap: boundedNumberFromEnv(env.ROTATION_SCORE_GAP, 15, {
       label: "ROTATION_SCORE_GAP",
       maximum: 100,
@@ -619,6 +619,16 @@ function roundOrderPrice(value) {
   return Number(value).toFixed(decimals);
 }
 
+function floorOrderPrice(value) {
+  const decimals = value >= 1 ? 2 : 4;
+  const factor = 10 ** decimals;
+  return (Math.floor((Number(value) + Number.EPSILON) * factor) / factor).toFixed(decimals);
+}
+
+function replacementStopClientOrderId(dateTag, tradeSequence, nowMs = Date.now()) {
+  return `${ORDER_PREFIX}-stop-${dateTag}-${tradeSequence}-p${Number(nowMs).toString(36)}`;
+}
+
 function profitProtectedStopPrice(config, position, peakReturn = 0) {
   const averageEntry = Number(position.avg_entry_price);
   if (!Number.isFinite(averageEntry) || averageEntry <= 0) return null;
@@ -633,7 +643,12 @@ function profitProtectedStopPrice(config, position, peakReturn = 0) {
       peakReturn - config.profitTrailDrawdownPct,
     );
   }
-  return averageEntry * (1 + protectedReturn);
+  const protectedStop = averageEntry * (1 + protectedReturn);
+  const currentPrice = Number(position.current_price);
+  if (!Number.isFinite(currentPrice) || currentPrice <= 0) return protectedStop;
+
+  const minimumTick = currentPrice >= 1 ? 0.01 : 0.0001;
+  return Math.min(protectedStop, currentPrice - minimumTick);
 }
 
 function protectiveStopRequest(
@@ -655,7 +670,7 @@ function protectiveStopRequest(
     client_order_id: `${ORDER_PREFIX}-stop-${dateTag}-${tradeSequence}`,
     qty: position.qty,
     side: "sell",
-    stop_price: roundOrderPrice(stopPrice),
+    stop_price: floorOrderPrice(stopPrice),
     symbol: position.symbol,
     time_in_force: "day",
     type: "stop",
@@ -786,9 +801,7 @@ async function ensureProtectiveStop(
     desiredStopPrice,
   );
   if (existing) {
-    request.client_order_id = `${ORDER_PREFIX}-stop-${dateTag}-${tradeSequence}-p${Math.round(
-      desiredStopPrice * 10_000,
-    )}`;
+    request.client_order_id = replacementStopClientOrderId(dateTag, tradeSequence);
   }
   const order = await tradingRequest(env, "/v2/orders", {
     body: JSON.stringify(request),
@@ -1198,6 +1211,7 @@ export {
   detectMarketRegime,
   easternParts,
   evaluateTrendCandidate,
+  floorOrderPrice,
   getConfig,
   healthPayload,
   latestBotExitTime,
@@ -1209,6 +1223,7 @@ export {
   positionExitReason,
   protectiveStopRequest,
   rankTrendCandidates,
+  replacementStopClientOrderId,
   roundOrderPrice,
   runBot,
   selectMomentumCandidate,
