@@ -58,7 +58,6 @@ function getConfig(env) {
 
   const allocationPct = percentFromEnv(env.ALLOCATION_PCT, 0.99);
   const stopLossPct = percentFromEnv(env.STOP_LOSS_PCT, 0.02);
-  const takeProfitPct = percentFromEnv(env.TAKE_PROFIT_PCT, 0.04);
   const dailyLossLimitPct = percentFromEnv(env.DAILY_LOSS_LIMIT_PCT, 0.04);
 
   return {
@@ -103,7 +102,7 @@ function getConfig(env) {
     }),
     profitLockFloorPct: percentFromEnv(env.PROFIT_LOCK_FLOOR_PCT, 0.001),
     profitLockTriggerPct: percentFromEnv(env.PROFIT_LOCK_TRIGGER_PCT, 0.005),
-    profitTrailDrawdownPct: percentFromEnv(env.PROFIT_TRAIL_DRAWDOWN_PCT, 0.0035),
+    profitTrailDrawdownPct: percentFromEnv(env.PROFIT_TRAIL_DRAWDOWN_PCT, 0.0075),
     profitTrailTriggerPct: percentFromEnv(env.PROFIT_TRAIL_TRIGGER_PCT, 0.01),
     rotationScoreGap: boundedNumberFromEnv(env.ROTATION_SCORE_GAP, 15, {
       label: "ROTATION_SCORE_GAP",
@@ -112,7 +111,6 @@ function getConfig(env) {
     }),
     reversalReturn15m: percentFromEnv(env.REVERSAL_RETURN_15M, 0.0015),
     stopLossPct,
-    takeProfitPct,
     tradingEnabled: env.TRADING_ENABLED === "true",
     universe,
   };
@@ -576,7 +574,6 @@ function positionExitReason({
   if (accountDailyReturn(account) <= -config.dailyLossLimitPct) return "daily-loss-limit";
   if (minutes >= config.forceExitMinutes) return "scheduled-close";
   if (unrealizedReturn <= -config.stopLossPct) return "position-stop";
-  if (unrealizedReturn >= config.takeProfitPct) return "take-profit";
   if (
     peakReturn >= config.profitTrailTriggerPct &&
     unrealizedReturn <= peakReturn - config.profitTrailDrawdownPct
@@ -1178,7 +1175,6 @@ function healthPayload(env) {
     schedule: "every five minutes; Alpaca market clock gated",
     stopLossPct: config.stopLossPct,
     strategyVersion: STRATEGY_VERSION,
-    takeProfitPct: config.takeProfitPct,
     universe: config.universe,
   };
 }
