@@ -1,6 +1,13 @@
 name: Alpaca $100 Paper Bot
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - src/**
+      - test/**
+      - package.json
+      - .github/workflows/paper-bot.yml
   workflow_dispatch:
   schedule:
     - cron: "2/5 9-15 * * 1-5"
@@ -17,7 +24,7 @@ jobs:
   run-paper-bot:
     if: ${{ vars.BOT_ACTIVE == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 355
     env:
       ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
       ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
@@ -48,5 +55,9 @@ jobs:
     steps:
       - name: Check out bot
         uses: actions/checkout@v5
-      - name: Run paper bot once
-        run: node src/run-once.js
+        with:
+          persist-credentials: false
+      - name: Verify bot before paper execution
+        run: npm test && npm run check
+      - name: Run paper bot session
+        run: node src/run-session.js

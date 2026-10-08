@@ -57,7 +57,9 @@ npm run check
 
 ## Free scheduled hosting with GitHub Actions
 
-The included `.github/workflows/paper-bot.yml` runs the bot every five minutes on weekdays using the `America/New_York` timezone. Alpaca's market clock still blocks runs whenever the market is closed.
+The included `.github/workflows/paper-bot.yml` requests startup every five minutes on weekdays using `America/New_York`. Once started, one runner checks immediately, then serially at five-minute UTC boundaries until 4 p.m. Eastern or 350 minutes have elapsed. It waits through pre-open and exits on a closed market after 9:30 a.m. Eastern. Alpaca's market clock gates all orders. Missed intervals are skipped, never replayed.
+
+GitHub can delay or drop scheduled triggers: October 1–2 showed roughly 10–23-minute startup gaps, and October 5–7 had only two starts daily despite the unchanged cron. The session loop removes that dependency between checks while a runner is active. GitHub startup and recovery remain best effort; this is not a guaranteed continuous scheduler. The concurrency group permits only one active session, with one pending recovery run.
 
 Use a public repository so standard GitHub-hosted runners remain free. The source code can be public because it contains no credentials. Store the credentials only as these GitHub Actions repository secrets:
 
@@ -69,7 +71,7 @@ Create two repository variables:
 - `BOT_ACTIVE` = `true` after both secrets have been entered. Until then, scheduled jobs are skipped.
 - `TRADING_ENABLED` = `false` for the first dry run. Change it to `true` only after a successful dry run confirms the `$100` paper account.
 
-The workflow can also be started manually from the Actions tab. It has read-only repository permissions, a three-minute timeout, and concurrency protection so two bot runs cannot overlap.
+The workflow can also be started manually from the Actions tab. Relevant pushes to `main` start verification and a paper session, subject to `BOT_ACTIVE`. Tests and syntax checks must pass before execution. It retains read-only repository permissions and the original concurrency group, disables checkout credential persistence, and has a 355-minute timeout below GitHub's six-hour job limit. An execution error stops the session without an immediate retry. Each check logs its UTC timestamp, commit, and paper result. Strategy, entry IDs, and broker stops are unchanged.
 
 ## Optional Cloudflare hosting
 
