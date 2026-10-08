@@ -773,10 +773,13 @@ async function ensureProtectiveStop(
     ? Number(stopPriceOverride)
     : Number(position.avg_entry_price) * (1 - config.stopLossPct);
   const existingStopPrice = Number(existing?.stop_price);
+  // Compare the price we would actually submit, avoiding cancel/replace churn
+  // when a fractional-cent target rounds to the existing resting stop.
+  const submittedStopPrice = Number(floorOrderPrice(desiredStopPrice));
   if (
     existing &&
     Number.isFinite(existingStopPrice) &&
-    existingStopPrice >= desiredStopPrice - 0.0001
+    existingStopPrice >= submittedStopPrice - 0.0001
   ) {
     return {
       action: "stop-already-active",
@@ -1206,6 +1209,7 @@ export {
   countDailyEntries,
   detectMarketRegime,
   easternParts,
+  ensureProtectiveStop,
   evaluateTrendCandidate,
   floorOrderPrice,
   getConfig,

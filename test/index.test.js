@@ -10,6 +10,7 @@ import {
   countDailyEntries,
   detectMarketRegime,
   easternParts,
+  ensureProtectiveStop,
   evaluateTrendCandidate,
   floorOrderPrice,
   getConfig,
@@ -464,4 +465,29 @@ test("paper account summaries make daily results visible without exposing creden
       lastEquity: 100,
     },
   );
+});
+
+test("a resting stop at the rounded target is retained without broker requests", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => assert.fail("must preserve the existing stop without cancel/replace");
+  try {
+    const result = await ensureProtectiveStop(
+      {},
+      getConfig(baseEnv),
+      { avg_entry_price: "56.246", current_price: "56.30", qty: "1.658251", symbol: "TNA" },
+      [{ id: "resting-stop", symbol: "TNA", side: "sell", type: "stop", stop_price: "55.12" }],
+      "20261008",
+      1,
+    );
+    assert.deepEqual(result, { action: "stop-already-active", orderId: "resting-stop", stopPrice: "55.12" });
+    // A stronger resting stop also remains untouched; protection never drops.
+    assert.equal((await ensureProtectiveStop(
+      {}, getConfig(baseEnv),
+      { avg_entry_price: "56.246", qty: "1.658251", symbol: "TNA" },
+      [{ id: "stronger-stop", symbol: "TNA", side: "sell", type: "stop", stop_price: "56.50" }],
+      "20261008", 1,
+    )).orderId, "stronger-stop");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
