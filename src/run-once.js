@@ -1,9 +1,7 @@
-import { runBot } from "./index.js";
-
+import { runReadOnlyCheck } from "./runner.js";
 try {
-  const result = await runBot(process.env, new Date());
-  console.log(JSON.stringify(result));
-} catch (error) {
-  console.error(JSON.stringify({ error: error.message, paperOnly: true }));
+  console.log(JSON.stringify(await runReadOnlyCheck(process.env)));
+} catch {
+  console.error(JSON.stringify({ event: "check-failed", paperOnly: true }));
   process.exitCode = 1;
 }

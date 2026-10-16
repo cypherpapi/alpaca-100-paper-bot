@@ -139,11 +139,7 @@ async function parseResponse(response) {
   }
 
   if (!response.ok) {
-    const safeMessage =
-      payload && typeof payload === "object"
-        ? payload.message || payload.code || response.statusText
-        : response.statusText;
-    throw new Error(`Alpaca request failed (${response.status}): ${safeMessage}`);
+    throw new Error(`Alpaca request failed (${response.status})`);
   }
   return payload;
 }
@@ -678,21 +674,58 @@ function sleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function fetchBars(env, symbols, now) {
+// Five-minute bar start timestamps may lag by one interval plus publication delay.
+const MAX_BAR_AGE_MS = 11 * 60_000;
+const MAX_BAR_PAGES = 100;
+
+function barFreshness(barsBySymbol, symbols, now) {
+  return symbols.map((symbol) => {
+    const bars = barsBySymbol[symbol] || [];
+    const times = bars.map((bar) => Date.parse(bar.t));
+    const invalid = times.some((time) => !Number.isFinite(time));
+    const latest = times.length && !invalid ? Math.max(...times) : null;
+    const ageMs = latest === null ? null : now.getTime() - latest;
+    const reason = invalid ? "invalid-timestamp" : latest === null ? "missing-bars"
+      : ageMs < 0 ? "future-bar" : ageMs > MAX_BAR_AGE_MS ? "stale-bars" : null;
+    return { symbol, count: bars.length, latestBarAt: latest === null ? null : new Date(latest).toISOString(),
+      ageSeconds: ageMs === null ? null : Math.round(ageMs / 1000), fresh: reason === null, reason };
+  });
+}
+
+async function fetchBars(env, symbols, now, stats = {}) {
   const end = new Date(now.getTime() - 60_000);
   const start = new Date(end.getTime() - 6 * 60 * 60_000);
   const params = new URLSearchParams({
-    adjustment: "raw",
-    end: end.toISOString(),
-    feed: "iex",
-    limit: "1000",
-    sort: "asc",
-    start: start.toISOString(),
-    symbols: symbols.join(","),
-    timeframe: "5Min",
+    adjustment: "raw", end: end.toISOString(), feed: "iex", limit: "1000",
+    sort: "asc", start: start.toISOString(), symbols: symbols.join(","), timeframe: "5Min",
   });
-  const payload = await marketDataRequest(env, `/v2/stocks/bars?${params}`);
-  return payload?.bars || {};
+  const merged = {};
+  const seenTokens = new Set();
+  stats.pages = 0;
+  for (;;) {
+    if (stats.pages >= MAX_BAR_PAGES) throw new Error("bar-pagination-limit");
+    const payload = await marketDataRequest(env, `/v2/stocks/bars?${params}`);
+    stats.pages += 1;
+    if (!payload || !payload.bars || typeof payload.bars !== "object" || Array.isArray(payload.bars)) {
+      throw new Error("invalid-bars-response");
+    }
+    for (const [symbol, bars] of Object.entries(payload.bars)) {
+      if (!symbols.includes(symbol)) continue;
+      if (!Array.isArray(bars)) throw new Error("invalid-bars-response");
+      (merged[symbol] ||= []).push(...bars);
+    }
+    const token = payload.next_page_token;
+    if (token === null || token === undefined || token === "") break;
+    if (typeof token !== "string" || seenTokens.has(token)) throw new Error("bar-pagination-cycle");
+    seenTokens.add(token);
+    params.set("page_token", token);
+  }
+  for (const [symbol, bars] of Object.entries(merged)) {
+    // The later page wins for a duplicate timestamp; ranking consumes chronological bars.
+    merged[symbol] = [...new Map(bars.map((bar) => [bar.t, bar])).values()]
+      .sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
+  }
+  return merged;
 }
 
 async function fetchSnapshots(env, symbols) {
@@ -900,7 +933,7 @@ async function protectFilledEntry(env, config, order, openOrders, dateTag, trade
   return { action: "entry-pending", orderId: order.id };
 }
 
-async function runBot(env, now = new Date()) {
+async function runBotCheck(env, now, diagnostics) {
   requireCredentials(env);
   const config = getConfig(env);
   const { dateTag, minutes } = easternParts(now);
@@ -927,10 +960,24 @@ async function runBot(env, now = new Date()) {
       ...BENCHMARK_SYMBOLS,
     ]),
   ];
-  const [barsBySymbol, snapshotsBySymbol] = await Promise.all([
-    fetchBars(env, symbols, now),
-    fetchSnapshots(env, symbols),
-  ]);
+  const stats = {};
+  let barsBySymbol = {};
+  let snapshotsBySymbol = {};
+  try {
+    [barsBySymbol, snapshotsBySymbol] = await Promise.all([
+      fetchBars(env, symbols, now, stats),
+      fetchSnapshots(env, symbols),
+    ]);
+  } catch (error) {
+    // Never use a partial page set. Preserve account/time/price based position safeguards.
+    diagnostics.dataError = ["bar-pagination-limit", "bar-pagination-cycle", "invalid-bars-response"].includes(error.message)
+      ? error.message : "market-data-unavailable";
+    barsBySymbol = {};
+  }
+  diagnostics.data = { feed: "iex", timeframe: "5Min", pages: stats.pages || 0,
+    maxBarAgeSeconds: MAX_BAR_AGE_MS / 1000, symbols: barFreshness(barsBySymbol, symbols, now) };
+  const dataFresh = !diagnostics.dataError && diagnostics.data.symbols.every((item) => item.fresh);
+  if (!dataFresh) barsBySymbol = {}; // Invalid or stale bars must never reach trend metrics.
   const marketRegime = detectMarketRegime(barsBySymbol);
   const rankings = rankTrendCandidates(
     barsBySymbol,
@@ -952,16 +999,16 @@ async function runBot(env, now = new Date()) {
         config,
         marketRegime,
       );
-    const metrics = currentEvaluation.metrics;
+    const metrics = dataFresh ? currentEvaluation.metrics : null;
     const entryOrder = latestPositionEntryOrder(allOrders, position.symbol);
     const enteredAt = entryOrder?.filled_at || entryOrder?.submitted_at || entryOrder?.created_at;
     const minutesHeld = enteredAt ? minutesSince(enteredAt, now) : 0;
-    const peakReturn = peakReturnSinceEntry(
+    const peakReturn = dataFresh ? peakReturnSinceEntry(
       barsBySymbol[position.symbol],
       position.avg_entry_price,
       enteredAt,
-    );
-    const leader = rankings.find(
+    ) : 0;
+    const leader = dataFresh && rankings.find(
       (ranking) => ranking.qualified && ranking.symbol !== position.symbol,
     );
     const rotationCandidate = leader
@@ -975,7 +1022,7 @@ async function runBot(env, now = new Date()) {
     const reason = positionExitReason({
       account,
       config,
-      currentEvaluation,
+      currentEvaluation: dataFresh ? currentEvaluation : null,
       metrics,
       minutesHeld,
       now,
@@ -1033,6 +1080,10 @@ async function runBot(env, now = new Date()) {
       unrealizedReturnPct: roundNumber(Number(position.unrealized_plpc) * 100, 4),
       ...trendContext,
     });
+  }
+
+  if (!dataFresh) {
+    return withPaperStatus(account, { action: "data-not-fresh" });
   }
 
   if (accountDailyReturn(account) <= -config.dailyLossLimitPct) {
@@ -1152,6 +1203,13 @@ async function runBot(env, now = new Date()) {
   });
 }
 
+
+async function runBot(env, now = new Date()) {
+  const diagnostics = {};
+  const result = await runBotCheck(env, now, diagnostics);
+  return { ...result, checkAt: now.toISOString(), ...diagnostics };
+}
+
 function healthPayload(env) {
   const config = getConfig(env);
   return {
@@ -1175,7 +1233,7 @@ function healthPayload(env) {
     reentryCooldownMinutes: config.reentryCooldownMinutes,
     rotationScoreGap: config.rotationScoreGap,
     reversalReturn15m: config.reversalReturn15m,
-    schedule: "every five minutes; Alpaca market clock gated",
+    schedule: "GitHub serial sessions; Cloudflare adapter inactive",
     stopLossPct: config.stopLossPct,
     strategyVersion: STRATEGY_VERSION,
     universe: config.universe,
@@ -1192,9 +1250,20 @@ export default {
   },
 
   async scheduled(controller, env, context) {
-    const task = runBot(env, new Date(controller.scheduledTime || Date.now()))
-      .then((result) => console.log(JSON.stringify(result)))
-      .catch((error) => console.error(JSON.stringify({ error: error.message, paperOnly: true })));
+    const now = new Date();
+    const scheduledAt = new Date(controller.scheduledTime || now.getTime());
+    console.log(JSON.stringify({ event: "check-started", timestamp: now.toISOString(),
+      scheduledAt: scheduledAt.toISOString(), schedulerLagSeconds: Math.max(0, (now - scheduledAt) / 1000),
+      adapter: "cloudflare", paperOnly: true }));
+    const task = Promise.reject(new Error("cloudflare-adapter-disabled"))
+      .then((result) => console.log(JSON.stringify({ event: "check-complete", ...result })))
+      .catch((error) => {
+        const reason = ["cloudflare-adapter-disabled"].includes(error.message)
+          ? error.message : "check-error";
+        console.error(JSON.stringify({ event: "check-failed", reason, paperOnly: true }));
+        // Preserve failure visibility to the scheduler; do not turn failures green.
+        throw new Error("paper-bot-check-failed");
+      });
     context.waitUntil(task);
   },
 };
@@ -1202,6 +1271,9 @@ export default {
 export {
   MARKET_DATA_BASE_URL,
   PAPER_TRADING_BASE_URL,
+  MAX_BAR_AGE_MS,
+  barFreshness,
+  fetchBars,
   accountDailyReturn,
   canRiskAnotherEntry,
   compactRankings,

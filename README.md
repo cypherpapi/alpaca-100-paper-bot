@@ -1,3 +1,5 @@
+> GitHub-only repair candidate: start with read-only validation. No automatic execution is enabled. See [operational readiness](OPERATIONAL_READINESS.md) and the dormant review workflow in deployment/. The old activation instructions below are historical; do not use them to bypass the read-only guard.
+
 # Alpaca $100 Paper Bot
 
 This is a deliberately high-risk **paper-only** trading experiment for the separate Alpaca paper account funded with $100 of simulated cash. It cannot be pointed at Alpaca's live trading host without changing source code.

@@ -1,63 +1,26 @@
-name: Alpaca $100 Paper Bot
+name: Paper bot mock-only CI
 
 on:
   push:
     branches: [main]
-    paths:
-      - src/**
-      - test/**
-      - package.json
-      - .github/workflows/paper-bot.yml
+  pull_request:
   workflow_dispatch:
-  schedule:
-    - cron: "2/5 9-15 * * 1-5"
-      timezone: "America/New_York"
 
 permissions:
   contents: read
 
-concurrency:
-  group: alpaca-paper-bot
-  cancel-in-progress: false
-
 jobs:
-  run-paper-bot:
-    if: ${{ vars.BOT_ACTIVE == 'true' }}
+  mock-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 355
-    env:
-      ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
-      ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
-      TRADING_ENABLED: ${{ vars.TRADING_ENABLED }}
-      UNIVERSE: TQQQ,SQQQ,SOXL,SOXS,TNA,TZA,NVDL,NVDD,TSLL,TSLQ
-      ALLOCATION_PCT: "0.99"
-      STOP_LOSS_PCT: "0.02"
-      DAILY_LOSS_LIMIT_PCT: "0.04"
-      MAX_ENTRIES_PER_DAY: "3"
-      MAX_CHASE_DAY_RETURN_PCT: "0.06"
-      MAX_HIGH_DISTANCE_PCT: "0.01"
-      MAX_VWAP_EXTENSION_ATR: "1.75"
-      MIN_HOLD_MINUTES: "10"
-      REENTRY_COOLDOWN_MINUTES: "5"
-      MIN_RETURN_15M: "0.0015"
-      MIN_RETURN_60M: "0.003"
-      MIN_TREND_SCORE: "60"
-      MIN_VOLUME_RATIO: "0.65"
-      PROFIT_LOCK_FLOOR_PCT: "0.001"
-      PROFIT_LOCK_TRIGGER_PCT: "0.005"
-      PROFIT_TRAIL_DRAWDOWN_PCT: "0.0075"
-      PROFIT_TRAIL_TRIGGER_PCT: "0.01"
-      ROTATION_SCORE_GAP: "15"
-      REVERSAL_RETURN_15M: "0.0015"
-      ENTRY_START_ET: "09:40"
-      ENTRY_END_ET: "14:30"
-      FORCE_EXIT_ET: "15:50"
+    timeout-minutes: 5
     steps:
-      - name: Check out bot
+      - name: Check out code
         uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - name: Verify bot before paper execution
-        run: npm test && npm run check
-      - name: Run paper bot session
-        run: node src/run-session.js
+      - name: Use Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Network-disabled mock tests and syntax checks
+        run: node --require ./tools/network-guard.cjs --test && npm run check

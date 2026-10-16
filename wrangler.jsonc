@@ -7,7 +7,7 @@
     "enabled": true
   },
   "triggers": {
-    "crons": ["*/5 * * * 1-5"]
+    "crons": []
   },
   "vars": {
     "TRADING_ENABLED": "false",

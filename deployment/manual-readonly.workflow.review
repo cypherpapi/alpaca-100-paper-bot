@@ -1,0 +1,49 @@
+# REVIEW ONLY: not a recognized workflow path. Copying into .github/workflows requires approval.
+name: Approved read-only paper validation
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_read_only:
+        type: boolean
+        default: false
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: alpaca-paper-bot
+  cancel-in-progress: false
+env:
+  TRADING_ENABLED: "false"
+  ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+  ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+jobs:
+  morning:
+    if: ${{ inputs.confirm_read_only && github.ref == 'refs/heads/main' && vars.BOT_ACTIVE == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 220
+    env:
+      SESSION_MAX_MINUTES: "210"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm test && npm run check
+      - run: node src/run-session.js
+  closing:
+    needs: morning
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    env:
+      SESSION_MAX_MINUTES: "350"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm test && npm run check
+      - run: node src/run-session.js
