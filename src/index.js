@@ -1,4 +1,3 @@
-import { DiagnosticExecutor, dispatchDiagnostic } from "./diagnostic-executor.js";
 const PAPER_TRADING_BASE_URL = "https://paper-api.alpaca.markets";
 const MARKET_DATA_BASE_URL = "https://data.alpaca.markets";
 const NEW_YORK_TIME_ZONE = "America/New_York";
@@ -1234,16 +1233,11 @@ function healthPayload(env) {
     reentryCooldownMinutes: config.reentryCooldownMinutes,
     rotationScoreGap: config.rotationScoreGap,
     reversalReturn15m: config.reversalReturn15m,
-    schedule: "every five minutes; Alpaca market clock gated",
+    schedule: "GitHub serial sessions; Cloudflare adapter inactive",
     stopLossPct: config.stopLossPct,
     strategyVersion: STRATEGY_VERSION,
     universe: config.universe,
   };
-}
-
-// The deployed draft remains dry-run-only even if the environment says otherwise.
-export class PaperDiagnosticExecutor extends DiagnosticExecutor {
-  constructor(ctx, env) { super(ctx, env, { run: runBot }); }
 }
 
 export default {
@@ -1261,10 +1255,10 @@ export default {
     console.log(JSON.stringify({ event: "check-started", timestamp: now.toISOString(),
       scheduledAt: scheduledAt.toISOString(), schedulerLagSeconds: Math.max(0, (now - scheduledAt) / 1000),
       adapter: "cloudflare", paperOnly: true }));
-    const task = dispatchDiagnostic(env, scheduledAt)
+    const task = Promise.reject(new Error("cloudflare-adapter-disabled"))
       .then((result) => console.log(JSON.stringify({ event: "check-complete", ...result })))
       .catch((error) => {
-        const reason = ["singleton-binding-unconfigured", "singleton-check-skipped"].includes(error.message)
+        const reason = ["cloudflare-adapter-disabled"].includes(error.message)
           ? error.message : "check-error";
         console.error(JSON.stringify({ event: "check-failed", reason, paperOnly: true }));
         // Preserve failure visibility to the scheduler; do not turn failures green.

@@ -1,7 +1,6 @@
 import { easternParts, runBot } from "./index.js";
 
 const INTERVAL_MS = 5 * 60_000;
-const SESSION_MS = 350 * 60_000;
 
 function inSession(now) {
   const { minutes } = easternParts(now);
@@ -13,13 +12,17 @@ function inSession(now) {
 
 // Serial checks; never retry an uncertain trading result or replay missed intervals.
 export async function runSession(env, {
+  sessionMinutes = 350,
   now = () => new Date(),
   wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   run = runBot,
   log = (result) => console.log(JSON.stringify(result)),
 } = {}) {
+  if (!Number.isInteger(sessionMinutes) || sessionMinutes < 1 || sessionMinutes > 350) {
+    throw new Error("SESSION_MAX_MINUTES must be an integer from 1 through 350");
+  }
   const started = now();
-  const deadline = started.getTime() + SESSION_MS;
+  const deadline = started.getTime() + sessionMinutes * 60_000;
   let checks = 0;
   let reason = "session-ended";
   const emit = (event, extra = {}) => log({ event, timestamp: now().toISOString(),
