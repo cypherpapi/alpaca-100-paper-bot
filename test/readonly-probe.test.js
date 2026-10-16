@@ -77,3 +77,26 @@ test("closed-session data is reported with its age, never presented as permissio
   assert.ok(result.marketData.symbols.every((x) => !x.fresh));
   assert.equal(result.readyForPaperOrders, false);
 });
+
+test("public validation output contains account status only, never balances or account identifiers", async () => {
+  const account = { equity: "94.16", cash: "81234.56", buying_power: "162469.12",
+    last_equity: "93456.78", portfolio_value: "84567.89", account_number: "private-account-number",
+    id: "private-account-identifier", email: "private-fixture@example.invalid", currency: "USD",
+    account_blocked: false, trading_blocked: false };
+  const result = await validatePaperReadOnly(env, { now, fetchImpl: async (url) => {
+    const path = new URL(url).pathname;
+    if (path === "/v2/account") return response(account);
+    if (path === "/v2/clock") return response({ is_open: false, timestamp: now.toISOString() });
+    return response({ bars: Object.fromEntries(["TQQQ", "SPY", "QQQ"].map((s) =>
+      [s, [{ t: "2026-10-16T19:00:00Z", c: 100, v: 1000 }]])) });
+  } });
+  assert.deepEqual(result.account, { connected: true, accountBlocked: false, tradingBlocked: false });
+  const emitted = JSON.stringify(result);
+  for (const key of ["equity", "cash", "buying_power", "last_equity", "portfolio_value",
+    "account_number", "id", "email", "currency"]) {
+    assert.ok(!emitted.includes(JSON.stringify(key) + ":"), "Forbidden public output field: " + key);
+    assert.ok(!emitted.includes(String(account[key])), "Forbidden public output value for: " + key);
+  }
+  assert.equal(result.submittedOrderRequests, 0);
+  assert.equal(result.effectiveTradingEnabled, false);
+});

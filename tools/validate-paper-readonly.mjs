@@ -47,7 +47,7 @@ export async function validatePaperReadOnly(env, { now = new Date(), fetchImpl =
       event: "read-only-validation", timestamp: now.toISOString(), result: "connected",
       paperOnly: true, effectiveTradingEnabled: false, submittedOrderRequests: 0,
       requests: counts,
-      account: { equity: Number(account.equity), currency: account.currency || null,
+      account: { connected: true,
         accountBlocked: Boolean(account.account_blocked), tradingBlocked: Boolean(account.trading_blocked) },
       clock: { isOpen: clock.is_open, timestamp: clock.timestamp || null },
       marketData: { feed: "iex", timeframe: "5Min", pages: stats.pages, symbols: summary },
