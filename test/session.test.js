@@ -9,7 +9,7 @@ function harness(at, run) {
     now: () => new Date(time),
     wait: async (ms) => { time += ms; },
     run: async (env, now) => run(env, now, (ms) => { time += ms; }),
-    log: (result) => logs.push(result),
+    log: (result) => { if (result.event === "check-complete") logs.push(result); },
   };
   return { options, logs };
 }

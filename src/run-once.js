@@ -1,9 +1,8 @@
-import { runBot } from "./index.js";
+import { startupDiagnostic } from "./singleton.js";
 
-try {
-  const result = await runBot(process.env, new Date());
-  console.log(JSON.stringify(result));
-} catch (error) {
-  console.error(JSON.stringify({ error: error.message, paperOnly: true }));
-  process.exitCode = 1;
-}
+// Retired broker entrypoint in this preparation draft. No broker runner is imported.
+console.log(JSON.stringify({
+  ...startupDiagnostic(process.env, new Date()),
+  ready: false, adapter: "legacy-cli-disabled", reason: "use-approved-singleton-executor",
+}));
+process.exitCode = 1;

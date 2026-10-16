@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test",
-    "check": "node --check src/index.js && node --check src/run-once.js && node --check src/session.js && node --check src/run-session.js"
+    "test": "node --require ./tools/network-guard.cjs --test",
+    "check": "node --check src/index.js && node --check src/run-once.js && node --check src/session.js && node --check src/run-session.js && node --check src/singleton.js && node --check src/watchdog.js && node --check src/diagnostic-executor.js"
   },
   "engines": {
     "node": ">=20"
