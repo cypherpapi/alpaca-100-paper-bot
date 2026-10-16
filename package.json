@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --require ./tools/network-guard.cjs --test",
-    "check": "node --check src/index.js && node --check src/run-once.js && node --check src/session.js && node --check src/run-session.js && node --check src/runner.js"
+    "check": "node --check src/index.js && node --check src/run-once.js && node --check src/session.js && node --check src/run-session.js && node --check src/runner.js && node --check tools/validate-paper-readonly.mjs"
   },
   "engines": {
     "node": ">=20"

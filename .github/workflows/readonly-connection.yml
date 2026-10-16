@@ -1,0 +1,40 @@
+name: Temporary paper read-only validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_read_only:
+        description: "Run one GET-only paper account, clock and market-data validation"
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alpaca-paper-bot
+  cancel-in-progress: false
+
+jobs:
+  validate-read-only:
+    if: ${{ inputs.confirm_read_only && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Use existing Node runtime version
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Network-disabled mocked tests and syntax checks
+        run: npm test && npm run check
+      - name: GET-only account, clock and bars validation
+        env:
+          TRADING_ENABLED: "false"
+          ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+          ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+        run: node tools/validate-paper-readonly.mjs
