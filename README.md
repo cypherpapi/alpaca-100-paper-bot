@@ -1,3 +1,5 @@
+> Restart preparation (October 19, 2026): the existing read-only adapters remain unchanged. The bounded validation workflow requests one GET-only account/data and dry-run strategy check on October 20 at 13:45 UTC (09:45 Eastern / 06:45 Pacific). Its ten-minute job cannot enable orders. See [restart operation](PAPER_RESTART.md) for the pending evidence gate and guarded paper entrypoint. Older activation instructions below are historical.
+
 > GitHub-only repair candidate: start with read-only validation. No automatic execution is enabled. See [operational readiness](OPERATIONAL_READINESS.md) and the dormant review workflow in deployment/. The old activation instructions below are historical; do not use them to bypass the read-only guard.
 
 # Alpaca $100 Paper Bot

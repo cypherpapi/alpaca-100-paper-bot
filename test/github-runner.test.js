@@ -53,7 +53,7 @@ test("failed uncertain first session does not get automatically retried", async 
   assert.equal(count, 1);
 });
 
-test("only test CI is active; manual validation workflow is a dormant review file", () => {
+test("mock CI remains credential-free; older session workflow stays dormant", () => {
   const ci = fs.readFileSync(new URL("../.github/workflows/paper-bot.yml", import.meta.url), "utf8");
   assert.doesNotMatch(ci, /secrets\.|schedule:|run-session|run-once|wrangler/);
   const review = fs.readFileSync(new URL("../deployment/manual-readonly.workflow.review", import.meta.url), "utf8");

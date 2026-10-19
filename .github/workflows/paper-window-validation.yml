@@ -1,0 +1,46 @@
+name: Bounded paper entry-window validation
+on:
+  schedule:
+    # One eligible validation date; a date gate below prevents annual recurrence.
+    # 09:45 Eastern / 06:45 Pacific on October 20, 2026.
+    - cron: '45 13 20 10 *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: alpaca-paper-bot
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Bound scheduled validation to its approved date
+        id: date
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$EVENT_NAME" == workflow_dispatch || "$(date -u +%F)" == 2026-10-20 ]]; then
+            echo 'eligible=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'Scheduled date expired; orders remain disabled.'
+          fi
+      - uses: actions/checkout@v5
+        if: steps.date.outputs.eligible == 'true'
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        if: steps.date.outputs.eligible == 'true'
+        with:
+          node-version: '24'
+      - name: Network-disabled tests and syntax checks
+        if: steps.date.outputs.eligible == 'true'
+        run: npm test && npm run check
+      - name: Read-only account, fresh bars, and strategy check
+        if: steps.date.outputs.eligible == 'true'
+        env:
+          TRADING_ENABLED: 'false'
+          ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+          ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+        run: node tools/run-paper-restart.mjs
