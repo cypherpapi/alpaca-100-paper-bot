@@ -111,3 +111,21 @@ test('bounded validation workflow cannot enable orders and has one UTC date with
   assert.match(workflow, /group: alpaca-paper-bot/);
   assert.doesNotMatch(workflow, /--paper-orders|PAPER_RESTART_APPROVED|TRADING_ENABLED: 'true'/);
 });
+
+
+test('rejected stale preflight preserves sanitized bar evidence without running strategy or orders', async () => {
+  const evidence = ready();
+  evidence.marketData.symbols[0] = { ...evidence.marketData.symbols[0],
+    fresh: false, latestBarAt: '2026-10-20T13:20:00Z', ageSeconds: 1500, reason: 'stale-bars' };
+  const logs = [];
+  await assert.rejects(runGatedPaper({}, { now: () => now, validate: async () => evidence,
+    log: value => logs.push(value), run: async () => assert.fail('must not run strategy'),
+    session: async () => assert.fail('must not start orders'),
+  }), /entry-data-not-fresh/);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].event, 'read-only-preflight');
+  assert.equal(logs[0].effectiveTradingEnabled, false);
+  assert.equal(logs[0].submittedOrderRequests, 0);
+  assert.deepEqual(logs[0].marketData.symbols[0], evidence.marketData.symbols[0]);
+  assert.equal(logs[0].readyForPaperOrders, false);
+});
