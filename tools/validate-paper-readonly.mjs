@@ -52,7 +52,7 @@ export async function validatePaperReadOnly(env, { now = new Date(), fetchImpl =
       clock: { isOpen: clock.is_open, timestamp: clock.timestamp || null },
       marketData: { feed: "iex", timeframe: "5Min", pages: stats.pages, symbols: summary,
         eligibility: dataEligibility(summary, getConfig(safeEnv).universe, now) },
-      readyForPaperOrders: false,
+      ordersAuthorizedByValidation: false,
     };
   } finally {
     globalThis.fetch = original;

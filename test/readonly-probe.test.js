@@ -38,7 +38,7 @@ test("probe checks actual GET surfaces without running the bot or exposing accou
   assert.equal(result.requests.paper, 2);
   assert.equal(result.requests.data, 1);
   assert.equal(result.marketData.symbols.length, 3);
-  assert.equal(result.readyForPaperOrders, false);
+  assert.equal(result.ordersAuthorizedByValidation, false);
   for (const value of ["private-account-id", "private-number", "fixture-secret", "fixture-key"]) {
     assert.ok(!JSON.stringify(result).includes(value));
   }
@@ -75,7 +75,7 @@ test("closed-session data is reported with its age, never presented as permissio
   } });
   assert.equal(result.clock.isOpen, false);
   assert.ok(result.marketData.symbols.every((x) => !x.fresh));
-  assert.equal(result.readyForPaperOrders, false);
+  assert.equal(result.ordersAuthorizedByValidation, false);
 });
 
 test("public validation output contains account status only, never balances or account identifiers", async () => {
