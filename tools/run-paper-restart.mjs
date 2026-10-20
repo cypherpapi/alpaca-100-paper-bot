@@ -1,11 +1,18 @@
 import { runGatedPaper } from '../src/paper-restart.js';
-const approvedReasons = new Set(['paper-orders-not-approved', 'outside-entry-window',
-  'account-or-market-not-ready', 'invalid-market-clock', 'entry-data-not-fresh',
-  'dry-run-check-not-ready', 'invalid-session-duration', 'paper-transport-refused']);
+import { appendFileSync } from 'node:fs';
+import { restartFailureDiagnostic } from './paper-restart-diagnostics.mjs';
 try {
   await runGatedPaper(process.env, { allowOrders: process.argv.includes('--paper-orders') });
 } catch (error) {
-  console.error(JSON.stringify({ event: 'paper-restart-paused', paperOnly: true,
-    reason: approvedReasons.has(error.message) ? error.message : 'validation-or-session-failed' }));
+  const diagnostic = JSON.stringify(restartFailureDiagnostic(error));
+  console.error(diagnostic);
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    try {
+      appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+        '\nPaper restart paused. Sanitized diagnostic:\n\n```json\n' + diagnostic + '\n```\n');
+    } catch {
+      console.error('paper-restart-summary-write-failed');
+    }
+  }
   process.exitCode = 1;
 }
