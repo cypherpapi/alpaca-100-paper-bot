@@ -692,6 +692,20 @@ function barFreshness(barsBySymbol, symbols, now) {
   });
 }
 
+// Every entry candidate and benchmark must meet the same history/freshness limits.
+function dataEligibility(symbols, universe, now) {
+  const healthy = symbol => {
+    const item = symbols.find(item => item.symbol === symbol);
+    const age = now.getTime() - Date.parse(item?.latestBarAt);
+    return item?.fresh === true && item.count >= 15 && Number.isFinite(age) && age >= 0 && age <= MAX_BAR_AGE_MS;
+  };
+  return {
+    benchmarksHealthy: BENCHMARK_SYMBOLS.every(healthy),
+    eligibleSymbols: universe.filter(healthy),
+    excludedSymbols: universe.filter(symbol => !healthy(symbol)),
+  };
+}
+
 async function fetchBars(env, symbols, now, stats = {}) {
   const end = new Date(now.getTime() - 60_000);
   const start = new Date(end.getTime() - 6 * 60 * 60_000);
@@ -976,8 +990,13 @@ async function runBotCheck(env, now, diagnostics) {
   }
   diagnostics.data = { feed: "iex", timeframe: "5Min", pages: stats.pages || 0,
     maxBarAgeSeconds: MAX_BAR_AGE_MS / 1000, symbols: barFreshness(barsBySymbol, symbols, now) };
-  const dataFresh = !diagnostics.dataError && diagnostics.data.symbols.every((item) => item.fresh);
-  if (!dataFresh) barsBySymbol = {}; // Invalid or stale bars must never reach trend metrics.
+  const eligibility = dataEligibility(diagnostics.data.symbols, config.universe, now);
+  diagnostics.data.eligibility = eligibility;
+  const dataFresh = !diagnostics.dataError && eligibility.benchmarksHealthy;
+  const healthySymbols = new Set(dataEligibility(diagnostics.data.symbols, symbols, now).eligibleSymbols);
+  // Never pass stale, invalid, or insufficient histories into metrics or rankings.
+  barsBySymbol = dataFresh ? Object.fromEntries(Object.entries(barsBySymbol)
+    .filter(([symbol]) => healthySymbols.has(symbol))) : {};
   const marketRegime = detectMarketRegime(barsBySymbol);
   const rankings = rankTrendCandidates(
     barsBySymbol,
@@ -999,16 +1018,17 @@ async function runBotCheck(env, now, diagnostics) {
         config,
         marketRegime,
       );
-    const metrics = dataFresh ? currentEvaluation.metrics : null;
+    const positionDataFresh = dataFresh && healthySymbols.has(position.symbol);
+    const metrics = positionDataFresh ? currentEvaluation.metrics : null;
     const entryOrder = latestPositionEntryOrder(allOrders, position.symbol);
     const enteredAt = entryOrder?.filled_at || entryOrder?.submitted_at || entryOrder?.created_at;
     const minutesHeld = enteredAt ? minutesSince(enteredAt, now) : 0;
-    const peakReturn = dataFresh ? peakReturnSinceEntry(
+    const peakReturn = positionDataFresh ? peakReturnSinceEntry(
       barsBySymbol[position.symbol],
       position.avg_entry_price,
       enteredAt,
     ) : 0;
-    const leader = dataFresh && rankings.find(
+    const leader = positionDataFresh && rankings.find(
       (ranking) => ranking.qualified && ranking.symbol !== position.symbol,
     );
     const rotationCandidate = leader
@@ -1022,7 +1042,7 @@ async function runBotCheck(env, now, diagnostics) {
     const reason = positionExitReason({
       account,
       config,
-      currentEvaluation: dataFresh ? currentEvaluation : null,
+      currentEvaluation: positionDataFresh ? currentEvaluation : null,
       metrics,
       minutesHeld,
       now,
@@ -1082,7 +1102,7 @@ async function runBotCheck(env, now, diagnostics) {
     });
   }
 
-  if (!dataFresh) {
+  if (!dataFresh || eligibility.eligibleSymbols.length === 0) {
     return withPaperStatus(account, { action: "data-not-fresh" });
   }
 
@@ -1273,6 +1293,7 @@ export {
   PAPER_TRADING_BASE_URL,
   MAX_BAR_AGE_MS,
   barFreshness,
+  dataEligibility,
   fetchBars,
   accountDailyReturn,
   canRiskAnotherEntry,

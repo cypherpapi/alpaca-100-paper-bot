@@ -1,4 +1,4 @@
-import { easternParts, getConfig, runBot } from './index.js';
+import { dataEligibility, easternParts, getConfig, runBot } from './index.js';
 import { runSession } from './session.js';
 import { validatePaperReadOnly } from '../tools/validate-paper-readonly.mjs';
 
@@ -36,13 +36,10 @@ export function assertRestartGate(result, env, now = new Date()) {
   }
   const clockAge = now.getTime() - Date.parse(result.clock.timestamp);
   if (!Number.isFinite(clockAge) || Math.abs(clockAge) > 60_000) throw new Error('invalid-market-clock');
-  const required = [...new Set([...config.universe, 'SPY', 'QQQ'])];
-  const symbols = result.marketData?.symbols || [];
-  if (!required.every(symbol => {
-    const item = symbols.find(item => item.symbol === symbol);
-    const age = now.getTime() - Date.parse(item?.latestBarAt);
-    return item?.fresh === true && item.count >= 15 && Number.isFinite(age) && age >= 0 && age <= 660_000;
-  })) throw new Error('entry-data-not-fresh');
+  const eligibility = dataEligibility(result.marketData?.symbols || [], config.universe, now);
+  if (!eligibility.benchmarksHealthy || eligibility.eligibleSymbols.length === 0) {
+    throw new Error('entry-data-not-fresh');
+  }
 }
 
 // No activation switch is persisted by validation. A future order process must
@@ -67,7 +64,9 @@ export async function runGatedPaper(env, {
     if (!allowOrders) {
       const check = await run({ ...env, TRADING_ENABLED: 'false' }, now());
       if (['blocked-account', 'market-closed'].includes(check.action) || check.dataError ||
-          !check.data?.symbols?.length || check.data.symbols.some(item => !item.fresh)) {
+          !check.data?.symbols?.length ||
+          !dataEligibility(check.data.symbols, getConfig(env).universe, now()).benchmarksHealthy ||
+          dataEligibility(check.data.symbols, getConfig(env).universe, now()).eligibleSymbols.length === 0) {
         throw new Error('dry-run-check-not-ready');
       }
       log({ event: 'read-only-strategy-check', paperOnly: true, effectiveTradingEnabled: false,
@@ -79,7 +78,7 @@ export async function runGatedPaper(env, {
       throw new Error('invalid-session-duration');
     }
     globalThis.fetch = paperOnlyTransport(fetchImpl, { allowOrders: true });
-    return await session({ ...env, TRADING_ENABLED: 'true' }, { sessionMinutes, now });
+    return await session({ ...env, TRADING_ENABLED: 'true' }, { sessionMinutes, now, log });
   } finally {
     globalThis.fetch = original;
   }

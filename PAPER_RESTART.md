@@ -58,3 +58,20 @@ GitHub cron and job startup are best effort and may be delayed or dropped. A
 missed validation needs an observed manual start inside the entry window; a delay
 past 14:30 Eastern fails the gate. This change does not claim reliable unattended
 scheduling, session handoff or guaranteed execution.
+
+## Approved per-symbol paper test (October 20, 2026)
+
+Entry candidates retain the minimum 15 bars and maximum 660-second bar age.
+An unhealthy individual symbol is excluded until healthy again; SPY and QQQ
+must both be healthy for any entry or rotation. Stale held-position history
+cannot drive rotation or trend exits. Account/time/loss safeguards and protective
+stops remain active independently of bar eligibility.
+
+The existing validation workflow defaults to read-only. Its explicit `paper_test`
+manual input on `main` permits one five-minute gated paper session, sharing the
+`alpaca-paper-bot` concurrency lock. Scheduled runs cannot enable orders. First
+run read-only validation successfully on the merged commit; then request the
+manual test. Each paper session repeats current account/clock/data gates. Entry
+windows and ordinary strategy signals still apply; no order is forced. A bounded
+session may leave an existing or new paper position protected by its broker stop;
+it does not promise a scheduled-close check after the session ends.

@@ -5,6 +5,12 @@ on:
     # 09:45 Eastern / 06:45 Pacific on October 20, 2026.
     - cron: '45 13 20 10 *'
   workflow_dispatch:
+    inputs:
+      paper_test:
+        description: 'Run the approved five-minute gated paper test (default is read-only)'
+        type: boolean
+        default: false
+        required: true
 permissions:
   contents: read
 concurrency:
@@ -37,10 +43,18 @@ jobs:
       - name: Network-disabled tests and syntax checks
         if: steps.date.outputs.eligible == 'true'
         run: npm test && npm run check
-      - name: Read-only account, fresh bars, and strategy check
+      - name: Gated account, data, strategy validation or approved bounded paper test
         if: steps.date.outputs.eligible == 'true'
         env:
           TRADING_ENABLED: 'false'
+          PAPER_TEST: ${{ inputs.paper_test }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
           ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
           ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
-        run: node tools/run-paper-restart.mjs
+        run: |
+          if [[ "$PAPER_TEST" == true && "$EVENT_NAME" == workflow_dispatch && "$REF" == refs/heads/main ]]; then
+            TRADING_ENABLED=true PAPER_RESTART_APPROVED=true SESSION_MAX_MINUTES=5 node tools/run-paper-restart.mjs --paper-orders
+          else
+            node tools/run-paper-restart.mjs
+          fi
