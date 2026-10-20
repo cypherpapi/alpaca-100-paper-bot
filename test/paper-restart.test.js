@@ -102,10 +102,8 @@ test('paper session requires explicit approval and a new successful current gate
   assert.equal(sessions, 1);
 });
 
-test('bounded workflow defaults to read-only and requires explicit main-branch manual paper test', () => {
+test('manual bounded test stays explicit and separate from recurring paper jobs', () => {
   const workflow = fs.readFileSync(new URL('../.github/workflows/paper-window-validation.yml', import.meta.url), 'utf8');
-  assert.match(workflow, /45 13 20 10 \*/);
-  assert.match(workflow, /== 2026-10-20/);
   assert.match(workflow, /TRADING_ENABLED: 'false'/);
   assert.match(workflow, /timeout-minutes: 10/);
   assert.match(workflow, /group: alpaca-paper-bot/);

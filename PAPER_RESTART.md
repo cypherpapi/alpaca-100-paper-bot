@@ -1,3 +1,34 @@
+## Current ongoing GitHub paper operation (October 20, 2026)
+
+The existing account workflow now requests weekday kickoff at **09:40 America/New_York**
+(`40 9 * * 1-5`, timezone-aware). One 210-minute morning session hands off only on
+success to a closing session capped at 340 minutes, with 220/355-minute job timeouts.
+The existing `alpaca-paper-bot` workflow lock serializes manual and scheduled runs;
+there is no second executor or automatic uncertain-order retry. GitHub scheduling
+is best effort, so configured kickoff is not proof of actual timely startup.
+
+The ongoing adapter verifies an open, current market clock and GET-only account
+access before starting. Each core check independently enforces account, data,
+benchmark, candidate, and risk gates. It can continue position management after
+14:30 even if entry data is unhealthy; it does not weaken entry eligibility.
+Entries remain 09:40–14:30 ET, scheduled exits 15:50 ET, and sessions stop by 16:00 ET.
+The closing cap leaves 15 minutes for setup/teardown within its job timeout.
+
+Manual defaults remain read-only. `audit_only` runs the GET-only account audit;
+`paper_test` retains the earlier bounded test; `ongoing_paper` starts the day path.
+For a supervised five-minute run of the day adapter, set both `ongoing_paper` and
+`supervised_test`; closing handoff is then skipped. Existing read-only CLI wrappers
+remain read-only. Existing credentials and paper endpoints are reused.
+
+Cloudflare overlap was reconciled from the original no-deployment setup history
+and the known account inventory. No Cloudflare migration or paid service is used.
+The earlier test made two no-signal checks; its subsequent audit verified zero
+positions, open orders, and recent orders at 17:46 UTC. An actual scheduled start,
+full-day handoff and 15:50 exit coverage still require observed run evidence.
+
+Historical preparation notes follow; their pending-activation statements describe
+older revisions and do not supersede the current operation above.
+
 # Bounded paper restart
 
 This change does not activate orders. Existing strategy, universe, allocation, stops,

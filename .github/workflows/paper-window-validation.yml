@@ -1,11 +1,18 @@
-name: Bounded paper entry-window validation
+name: Gated paper operation and audit
 on:
   schedule:
-    # One eligible validation date; a date gate below prevents annual recurrence.
-    # 09:45 Eastern / 06:45 Pacific on October 20, 2026.
-    - cron: '45 13 20 10 *'
+    - cron: '40 9 * * 1-5'
+      timezone: America/New_York
   workflow_dispatch:
     inputs:
+      supervised_test:
+        description: 'Bound a manual ongoing-paper start to five minutes; skip closing handoff'
+        type: boolean
+        default: false
+      ongoing_paper:
+        description: 'Manually start the approved ongoing paper day; default remains read-only'
+        type: boolean
+        default: false
       audit_only:
         description: 'GET-only post-session positions and order audit'
         type: boolean
@@ -26,33 +33,19 @@ concurrency:
   cancel-in-progress: false
 jobs:
   validate:
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.ongoing_paper }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Bound scheduled validation to its approved date
-        id: date
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          if [[ "$EVENT_NAME" == workflow_dispatch || "$(date -u +%F)" == 2026-10-20 ]]; then
-            echo 'eligible=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'Scheduled date expired; orders remain disabled.'
-          fi
       - uses: actions/checkout@v5
-        if: steps.date.outputs.eligible == 'true'
         with:
           persist-credentials: false
       - uses: actions/setup-node@v4
-        if: steps.date.outputs.eligible == 'true'
         with:
           node-version: '24'
       - name: Network-disabled tests and syntax checks
-        if: steps.date.outputs.eligible == 'true'
         run: npm test && npm run check
       - name: Gated account, data, strategy validation or approved bounded paper test
-        if: steps.date.outputs.eligible == 'true'
         env:
           TRADING_ENABLED: 'false'
           AUDIT_ONLY: ${{ inputs.audit_only }}
@@ -70,3 +63,44 @@ jobs:
           else
             node tools/run-paper-restart.mjs
           fi
+  morning:
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || inputs.ongoing_paper) }}
+    env:
+      PAPER_SUPERVISED_TEST: ${{ github.event_name == 'workflow_dispatch' && inputs.supervised_test && 'true' || 'false' }}
+      ONGOING_PAPER_APPROVED: 'true'
+      PAPER_RESTART_APPROVED: 'true'
+      TRADING_ENABLED: 'true'
+      ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+      ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 220
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm test && npm run check
+      - run: node tools/run-ongoing-paper.mjs morning
+  closing:
+    if: ${{ !inputs.supervised_test }}
+    needs: morning
+    env:
+      PAPER_SUPERVISED_TEST: ${{ github.event_name == 'workflow_dispatch' && inputs.supervised_test && 'true' || 'false' }}
+      ONGOING_PAPER_APPROVED: 'true'
+      PAPER_RESTART_APPROVED: 'true'
+      TRADING_ENABLED: 'true'
+      ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
+      ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm test && npm run check
+      - run: node tools/run-ongoing-paper.mjs closing
