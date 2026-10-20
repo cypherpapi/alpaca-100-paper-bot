@@ -202,3 +202,93 @@ test("invalid timestamps still allow account-based position safeguards", async (
     assert.equal(result.data.symbols[0].reason, "invalid-timestamp");
   });
 });
+
+
+function perSymbolMock({ unhealthy = 'NVDD', sparse = false, position = null, existingStop = false } = {}) {
+  const base = brokerMock({ position, existingStop });
+  return async (url, init) => {
+    if (!new URL(url).pathname.endsWith('/bars')) return base.fn(url, init);
+    const bars = Object.fromEntries(['TQQQ', 'NVDD', 'SPY', 'QQQ'].map(symbol => [symbol,
+      Array.from({ length: symbol === unhealthy && sparse ? 5 : 20 }, (_, i) =>
+        bar(new Date(now.getTime() - (20 - i) * 300_000 -
+          (symbol === unhealthy && !sparse ? 86_400_000 : 0)).toISOString(), 100))]));
+    return response({ bars });
+  };
+}
+
+test('unhealthy individual candidates are excluded, with eligibility restored only on fresh sufficient history', async () => {
+  for (const sparse of [false, true]) {
+    await mockFetch(perSymbolMock({ sparse }), async () => {
+      const result = await runBot({ ...env, UNIVERSE: 'TQQQ,NVDD' }, now);
+      assert.equal(result.action, 'no-signal');
+      assert.deepEqual(result.data.eligibility.eligibleSymbols, ['TQQQ']);
+      assert.deepEqual(result.data.eligibility.excludedSymbols, ['NVDD']);
+      assert.deepEqual(result.rankings.find(x => x.symbol === 'NVDD').reasons, ['insufficient-data']);
+      assert.notDeepEqual(result.rankings.find(x => x.symbol === 'TQQQ').reasons, ['insufficient-data']);
+    });
+  }
+  await mockFetch(perSymbolMock({ unhealthy: null }), async () => {
+    const result = await runBot({ ...env, UNIVERSE: 'TQQQ,NVDD' }, now);
+    assert.deepEqual(result.data.eligibility.eligibleSymbols, ['TQQQ', 'NVDD']);
+    assert.notDeepEqual(result.rankings.find(x => x.symbol === 'NVDD').reasons, ['insufficient-data']);
+  });
+});
+
+test('either stale or insufficient benchmark blocks all entries', async () => {
+  for (const unhealthy of ['SPY', 'QQQ']) for (const sparse of [false, true]) {
+    await mockFetch(perSymbolMock({ unhealthy, sparse }), async () => {
+      const result = await runBot(env, now);
+      assert.equal(result.action, 'data-not-fresh');
+      assert.equal(result.data.eligibility.benchmarksHealthy, false);
+    });
+  }
+});
+
+test('unhealthy held data never enables rotation and preserves stops and account-loss exits', async () => {
+  const position = { symbol: 'TQQQ', avg_entry_price: '100', qty: '1', unrealized_plpc: '0.001' };
+  for (const unhealthy of ['TQQQ', 'SPY']) {
+    await mockFetch(perSymbolMock({ unhealthy, position, existingStop: true }), async () => {
+      const result = await runBot({ ...env, UNIVERSE: 'TQQQ,NVDD', TRADING_ENABLED: 'true' }, now);
+      assert.equal(result.action, 'stop-already-active');
+      assert.equal(result.positionManagement.rotationCandidate, null);
+    });
+  }
+  await mockFetch(perSymbolMock({ unhealthy: 'TQQQ', position: { ...position, unrealized_plpc: '-0.03' } }), async () => {
+    const result = await runBot(env, now);
+    assert.equal(result.reason, 'position-stop');
+  });
+  await mockFetch(perSymbolMock({ unhealthy: 'NVDD', position }), async () => {
+    const result = await runBot({ ...env, UNIVERSE: 'TQQQ,NVDD' }, now);
+    assert.equal(result.positionManagement.rotationCandidate, null);
+    assert.deepEqual(result.rankings.find(x => x.symbol === 'NVDD').reasons, ['insufficient-data']);
+  });
+});
+
+test('stale strong candidates cannot enter or rotate, and restored healthy candidates can', async () => {
+  for (const stale of [true, false]) for (const held of [false, true]) {
+    const position = held ? { symbol: 'TQQQ', avg_entry_price: '100', qty: '1', unrealized_plpc: '0.006' } : null;
+    const base = perSymbolMock({ unhealthy: null, position });
+    const fn = async (url, init) => {
+      const path = new URL(url).pathname;
+      if (path.startsWith('/v2/assets/')) return response({ tradable: true, fractionable: true, status: 'active' });
+      if (!path.endsWith('/bars')) return base(url, init);
+      const bars = Object.fromEntries(['TQQQ', 'NVDD', 'SPY', 'QQQ'].map(symbol => [symbol,
+        Array.from({ length: 20 }, (_, i) => {
+          const close = symbol === 'NVDD' ? 100 + i * 0.3 : 100;
+          return { t: new Date(now.getTime() - (20 - i) * 300_000 -
+            (symbol === 'NVDD' && stale ? 86_400_000 : 0)).toISOString(),
+            c: close, o: close - 0.075, h: close + 0.9, l: close - 0.9, v: 1000 + i * 10 };
+        })]));
+      return response({ bars });
+    };
+    await mockFetch(fn, async () => {
+      const result = await runBot({ ...env, UNIVERSE: 'TQQQ,NVDD' }, now);
+      if (held) {
+        assert.equal(result.positionManagement.rotationCandidate?.symbol || null, stale ? null : 'NVDD');
+      } else {
+        assert.equal(result.action, stale ? 'no-signal' : 'dry-run-entry');
+        if (!stale) assert.equal(result.symbol, 'NVDD');
+      }
+    });
+  }
+});

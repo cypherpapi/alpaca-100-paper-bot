@@ -1,5 +1,5 @@
 import { pathToFileURL } from "node:url";
-import { fetchBars, barFreshness, getConfig, PAPER_TRADING_BASE_URL } from "../src/index.js";
+import { fetchBars, barFreshness, dataEligibility, getConfig, PAPER_TRADING_BASE_URL } from "../src/index.js";
 
 export function getOnlyTransport(fetchImpl, counts = { paper: 0, data: 0 }) {
   return async (input, init = {}) => {
@@ -39,7 +39,7 @@ export async function validatePaperReadOnly(env, { now = new Date(), fetchImpl =
     const stats = {};
     const bars = await fetchBars(safeEnv, symbols, now, stats);
     const summary = barFreshness(bars, symbols, now);
-    if (summary.some((item) => !item.count || !item.latestBarAt ||
+    if (summary.filter(item => ["SPY", "QQQ"].includes(item.symbol)).some((item) => !item.count || !item.latestBarAt ||
         ["invalid-timestamp", "future-bar"].includes(item.reason))) {
       throw new Error("market-data-incomplete");
     }
@@ -50,7 +50,8 @@ export async function validatePaperReadOnly(env, { now = new Date(), fetchImpl =
       account: { connected: true,
         accountBlocked: Boolean(account.account_blocked), tradingBlocked: Boolean(account.trading_blocked) },
       clock: { isOpen: clock.is_open, timestamp: clock.timestamp || null },
-      marketData: { feed: "iex", timeframe: "5Min", pages: stats.pages, symbols: summary },
+      marketData: { feed: "iex", timeframe: "5Min", pages: stats.pages, symbols: summary,
+        eligibility: dataEligibility(summary, getConfig(safeEnv).universe, now) },
       readyForPaperOrders: false,
     };
   } finally {

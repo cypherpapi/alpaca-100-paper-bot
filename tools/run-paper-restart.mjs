@@ -16,7 +16,15 @@ try {
     log: value => {
       const diagnostic = JSON.stringify(value);
       console.log(diagnostic);
-      if (value.event === 'read-only-preflight') writeSummary('Sanitized read-only preflight:', diagnostic);
+      if (['read-only-preflight', 'read-only-strategy-check'].includes(value.event)) {
+        writeSummary('Sanitized read-only readiness evidence:', diagnostic);
+      }
+      if (['session-started', 'check-complete', 'session-completed', 'session-failed'].includes(value.event)) {
+        const { event, timestamp, commit, paperOnly, action, symbol, checks, reason } = value;
+        writeSummary('Bounded paper session evidence:', JSON.stringify({
+          event, timestamp, commit, paperOnly, action, symbol, checks, reason,
+        }));
+      }
     },
   });
 } catch (error) {

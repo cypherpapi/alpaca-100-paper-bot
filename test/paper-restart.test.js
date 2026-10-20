@@ -22,10 +22,10 @@ test('restart gate rejects closed, blocked, incomplete and stale inputs despite 
     r => r.account.accountBlocked = true,
     r => r.clock.timestamp = '2026-10-20T13:40:00Z',
     r => r.marketData.symbols.pop(),
-    r => r.marketData.symbols[0].count = 14,
-    r => r.marketData.symbols[0].latestBarAt = '2026-10-20T13:30:00Z',
-    r => r.marketData.symbols[0].latestBarAt = '2026-10-20T13:50:00Z',
-    r => r.marketData.symbols[0].fresh = false,
+    r => r.marketData.symbols.find(item => item.symbol === 'SPY').count = 14,
+    r => r.marketData.symbols.find(item => item.symbol === 'SPY').latestBarAt = '2026-10-20T13:30:00Z',
+    r => r.marketData.symbols.find(item => item.symbol === 'SPY').latestBarAt = '2026-10-20T13:50:00Z',
+    r => r.marketData.symbols.find(item => item.symbol === 'SPY').fresh = false,
     r => r.submittedOrderRequests = 1,
   ]) {
     const result = ready(); change(result);
@@ -102,20 +102,24 @@ test('paper session requires explicit approval and a new successful current gate
   assert.equal(sessions, 1);
 });
 
-test('bounded validation workflow cannot enable orders and has one UTC date with a year guard', () => {
+test('bounded workflow defaults to read-only and requires explicit main-branch manual paper test', () => {
   const workflow = fs.readFileSync(new URL('../.github/workflows/paper-window-validation.yml', import.meta.url), 'utf8');
   assert.match(workflow, /45 13 20 10 \*/);
   assert.match(workflow, /== 2026-10-20/);
   assert.match(workflow, /TRADING_ENABLED: 'false'/);
   assert.match(workflow, /timeout-minutes: 10/);
   assert.match(workflow, /group: alpaca-paper-bot/);
-  assert.doesNotMatch(workflow, /--paper-orders|PAPER_RESTART_APPROVED|TRADING_ENABLED: 'true'/);
+  assert.match(workflow, /default: false/);
+  assert.match(workflow, /\$PAPER_TEST.*true.*\$EVENT_NAME.*workflow_dispatch.*\$REF.*refs\/heads\/main/);
+  assert.match(workflow, /TRADING_ENABLED=true PAPER_RESTART_APPROVED=true SESSION_MAX_MINUTES=5 node tools\/run-paper-restart.mjs --paper-orders/);
+  assert.match(workflow, /else\s+node tools\/run-paper-restart.mjs\s+fi/);
 });
 
 
 test('rejected stale preflight preserves sanitized bar evidence without running strategy or orders', async () => {
   const evidence = ready();
-  evidence.marketData.symbols[0] = { ...evidence.marketData.symbols[0],
+  const index = evidence.marketData.symbols.findIndex(item => item.symbol === 'SPY');
+  evidence.marketData.symbols[index] = { ...evidence.marketData.symbols[index],
     fresh: false, latestBarAt: '2026-10-20T13:20:00Z', ageSeconds: 1500, reason: 'stale-bars' };
   const logs = [];
   await assert.rejects(runGatedPaper({}, { now: () => now, validate: async () => evidence,
@@ -126,6 +130,21 @@ test('rejected stale preflight preserves sanitized bar evidence without running 
   assert.equal(logs[0].event, 'read-only-preflight');
   assert.equal(logs[0].effectiveTradingEnabled, false);
   assert.equal(logs[0].submittedOrderRequests, 0);
-  assert.deepEqual(logs[0].marketData.symbols[0], evidence.marketData.symbols[0]);
+  assert.deepEqual(logs[0].marketData.symbols[index], evidence.marketData.symbols[index]);
   assert.equal(logs[0].readyForPaperOrders, false);
+});
+
+
+test('restart accepts healthy candidates with unhealthy peers but still requires both benchmarks', () => {
+  for (const issue of ['stale', 'sparse', 'missing']) {
+    const r = ready();
+    const nvdd = r.marketData.symbols.find(item => item.symbol === 'NVDD');
+    if (issue === 'stale') { nvdd.fresh = false; nvdd.latestBarAt = '2026-10-20T13:20:00Z'; }
+    if (issue === 'sparse') nvdd.count = 5;
+    if (issue === 'missing') r.marketData.symbols = r.marketData.symbols.filter(item => item !== nvdd);
+    assert.doesNotThrow(() => assertRestartGate(r, {}, now));
+    r.marketData.symbols.find(item => item.symbol === 'QQQ').count = 14;
+    assert.throws(() => assertRestartGate(r, {}, now), /entry-data-not-fresh/);
+  }
+  assert.throws(() => assertRestartGate(ready(), { UNIVERSE: 'UNKNOWN' }, now), /entry-data-not-fresh/);
 });
