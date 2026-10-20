@@ -131,7 +131,7 @@ test('rejected stale preflight preserves sanitized bar evidence without running 
   assert.equal(logs[0].effectiveTradingEnabled, false);
   assert.equal(logs[0].submittedOrderRequests, 0);
   assert.deepEqual(logs[0].marketData.symbols[index], evidence.marketData.symbols[index]);
-  assert.equal(logs[0].readyForPaperOrders, false);
+  assert.equal(logs[0].ordersAuthorizedByValidation, false);
 });
 
 

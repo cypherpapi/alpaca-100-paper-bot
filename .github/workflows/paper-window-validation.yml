@@ -6,6 +6,14 @@ on:
     - cron: '45 13 20 10 *'
   workflow_dispatch:
     inputs:
+      audit_only:
+        description: 'GET-only post-session positions and order audit'
+        type: boolean
+        default: false
+      audit_after:
+        description: 'Audit orders submitted after this ISO timestamp (within 24 hours)'
+        type: string
+        default: ''
       paper_test:
         description: 'Run the approved five-minute gated paper test (default is read-only)'
         type: boolean
@@ -47,13 +55,17 @@ jobs:
         if: steps.date.outputs.eligible == 'true'
         env:
           TRADING_ENABLED: 'false'
+          AUDIT_ONLY: ${{ inputs.audit_only }}
+          AUDIT_AFTER: ${{ inputs.audit_after }}
           PAPER_TEST: ${{ inputs.paper_test }}
           EVENT_NAME: ${{ github.event_name }}
           REF: ${{ github.ref }}
           ALPACA_API_KEY_ID: ${{ secrets.ALPACA_API_KEY_ID }}
           ALPACA_API_SECRET_KEY: ${{ secrets.ALPACA_API_SECRET_KEY }}
         run: |
-          if [[ "$PAPER_TEST" == true && "$EVENT_NAME" == workflow_dispatch && "$REF" == refs/heads/main ]]; then
+          if [[ "$AUDIT_ONLY" == true && "$EVENT_NAME" == workflow_dispatch && "$REF" == refs/heads/main ]]; then
+            node tools/audit-paper-account.mjs
+          elif [[ "$PAPER_TEST" == true && "$EVENT_NAME" == workflow_dispatch && "$REF" == refs/heads/main ]]; then
             TRADING_ENABLED=true PAPER_RESTART_APPROVED=true SESSION_MAX_MINUTES=5 node tools/run-paper-restart.mjs --paper-orders
           else
             node tools/run-paper-restart.mjs
