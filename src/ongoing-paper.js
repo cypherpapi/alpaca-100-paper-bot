@@ -33,6 +33,8 @@ export async function runOngoingPaper(env, { phase, now = () => new Date(),
     // not suppress account/time/loss exits or protective stops in the session.
     const check = await run({ ...env, TRADING_ENABLED: 'false' }, now());
     if (['blocked-account', 'market-closed'].includes(check.action)) throw new Error('account-or-market-not-ready');
+    const currentClockAge = now().getTime() - Date.parse(clock.timestamp);
+    if (Math.abs(currentClockAge) > 60_000) throw new Error('market-clock-not-ready');
     log({ event: 'ongoing-paper-preflight', paperOnly: true, phase, action: check.action });
     globalThis.fetch = paperOnlyTransport(fetchImpl, { allowOrders: true });
     // runBot enforces 09:40–14:30 entries, per-symbol/benchmark data gates, and

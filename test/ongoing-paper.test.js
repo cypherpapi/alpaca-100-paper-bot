@@ -60,3 +60,12 @@ test('supervised same-day test bounds the ongoing adapter to five minutes', asyn
     fetchImpl: fetch, log: () => {}, run: async () => ({ action: 'no-signal' }),
     session: async (_, options) => assert.equal(options.sessionMinutes, 5) });
 });
+
+
+test('slow read-only preflight cannot enable orders using an expired market clock', async () => {
+  let current = at.getTime();
+  await assert.rejects(runOngoingPaper(env, { phase: 'closing', now: () => new Date(current),
+    fetchImpl: fetch, log: () => {}, run: async () => { current += 90_000; return { action: 'no-signal' }; },
+    session: async () => assert.fail('no session after stale clock'),
+  }), /market-clock-not-ready/);
+});
