@@ -59,6 +59,9 @@ export async function runGatedPaper(env, {
   globalThis.fetch = paperOnlyTransport(fetchImpl); // GET-only throughout preflight.
   try {
     const result = await validate({ ...env, TRADING_ENABLED: 'false' }, { now: now(), fetchImpl: globalThis.fetch });
+    // Validation already strips account identity, balances, credentials, and raw payloads.
+    // Preserve bar timestamps/counts even when the readiness gate rejects them.
+    log({ ...result, event: 'read-only-preflight', readyForPaperOrders: false });
     assertRestartGate(result, env, now());
     log({ ...result, event: 'entry-window-gate-passed', readyForPaperOrders: false });
     if (!allowOrders) {
