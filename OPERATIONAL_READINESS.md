@@ -1,3 +1,5 @@
+> Historical readiness review. Current approved GitHub paper operation and observed evidence are documented in PAPER_RESTART.md.
+
 # Operational readiness: use the existing GitHub runner
 
 ## Recommendation
